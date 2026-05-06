@@ -1,3 +1,9 @@
 msal
 requests
 python-dotenv
+SQLAlchemy
+pg8000
+fastapi
+uvicorn[standard]
+pandas
+openpyxl
