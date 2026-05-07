@@ -3,6 +3,9 @@ from sqlalchemy import ForeignKey, create_engine, Column, String, DateTime, Inte
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
 import logging
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -35,9 +38,12 @@ try:
 
         id = Column(Integer, primary_key=True, autoincrement=True)
         archivo_id = Column(String, ForeignKey("archivos.archivo_id"), nullable=False)
+        organismo = Column(String, nullable=False)
+        tipo_recaudo = Column(String, nullable=False)
         fuente = Column(String, nullable=False)
         fecha_pago = Column(DateTime, nullable=False)
         recibo = Column(String, nullable=False)
+        recibo_pago = Column(String, nullable=True)
         valor_recibido = Column(String, nullable=False)
         tipo_documento = Column(String, nullable=True)
         identificacion = Column(String, nullable=False)
@@ -56,7 +62,9 @@ try:
         resolucion_mp = Column(String, nullable=True)
         valor_inicial_cargado = Column(String, nullable=True)
         concepto = Column(String, nullable=False)
+        fecha_cartera = Column(DateTime, nullable=True)
         estado_cartera = Column(String, nullable=True)
+        tipo_cartera = Column(String, nullable=True)
         concepto_principal = Column(String, nullable=True)
         gestion = Column(String, nullable=False)
         descuento_cartera = Column(String, nullable=True)
@@ -66,6 +74,55 @@ try:
         resolucion_sancion = Column(String, nullable=True)
         fecha_resolucion_sancion = Column(DateTime, nullable=True)
         valor_pagado_de_intereses = Column(String, nullable=True)
+        acuerdos_de_pago = Column(String, nullable=True)
+        referencia = Column(String, nullable=True)
+        sistematizacion = Column(String, nullable=True)
+        created_at = Column(DateTime, default=func.now())
+
+    class Cartera(Base):
+        __tablename__ = "carteras"
+
+        id = Column(Integer, primary_key=True, autoincrement=True)
+        archivo_id = Column(String, ForeignKey("archivos.archivo_id"), nullable=False)
+        organismo = Column(String, nullable=False)
+        tipo_cartera = Column(String, nullable=False)
+        codigo = Column(String, nullable=False)
+        fecha = Column(String, nullable=True) # Tanto fecha cartera como comparendo
+        tipo_comparendo = Column(String, nullable=True)
+        clase = Column(String, nullable=True)
+        servicio = Column(String, nullable=True)
+        valor_inicial_cartera = Column(String, nullable=True)
+        numero_referencia_cartera = Column(String, nullable=True)
+        estado_cartera = Column(String, nullable=True)
+        fecha_inicio_cartera = Column(String, nullable=True)
+        estado_gestion = Column(String, nullable=True)
+        capital = Column(String, nullable=True)
+        total = Column(String, nullable=True)
+        resolucion_fecha = Column(String, nullable=True)
+        intereses = Column(String, nullable=True)
+        placa = Column(String, nullable=True)
+        tipo_identificacion = Column(String, nullable=True)
+        numero_identificacion = Column(String, nullable=True)
+        nombre_infractor = Column(String, nullable=True)
+        numero_comparendo = Column(String, nullable=True)
+        estado_comparendo = Column(String, nullable=True)
+        infraccion = Column(String, nullable=True)
+        resolucion_sancion = Column(String, nullable=True)
+        mandamiento_de_pago = Column(String, nullable=True)
+        fecha_mandamiento_de_pago = Column(String, nullable=True)
+        fecha_de_notificacion = Column(String, nullable=True)
+        clase_vehiculo = Column(String, nullable=True)
+        año_comparendo = Column(String, nullable=True)
+        ciudad = Column(String, nullable=True)
+        direccion = Column(String, nullable=True)
+        telefono = Column(String, nullable=True)
+        movil = Column(String, nullable=True)
+        email = Column(String, nullable=True)
+        modelo = Column(String, nullable=True)
+        fecha_propietario = Column(String, nullable=True)
+        filtro_coactivo = Column(String, nullable=True)
+        mp_resolucion = Column(String, nullable=True)
+        fecha_mp = Column(String, nullable=True)
         created_at = Column(DateTime, default=func.now())
     
     class Auditoria(Base):
