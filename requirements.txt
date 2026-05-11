@@ -2,7 +2,7 @@ msal
 requests
 python-dotenv
 SQLAlchemy
-pg8000
+psycopg2-binary
 fastapi
 uvicorn[standard]
 pandas

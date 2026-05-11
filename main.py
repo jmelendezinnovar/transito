@@ -2,6 +2,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 from sharepoint import get_sharepoint_files, save_files_to_database
 import logging
+import os
+from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -110,10 +112,12 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
     print("Iniciando servidor FastAPI...")
-    print("Documentación disponible en: http://localhost:8000/docs")
+    load_dotenv()
+    
+
     uvicorn.run(
         app,
-        host="0.0.0.0",
+        host=os.getenv("HOST", "0.0.0.0"),
         port=8000,
         log_level="info"
     )

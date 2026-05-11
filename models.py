@@ -10,8 +10,8 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Usar pg8000 como driver PostgreSQL (puro Python, sin compilación necesaria)
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+pg8000://postgres:12345678@localhost:5432/transito")
+# Usar psycopg2 como driver PostgreSQL (soporta UTF-8 correctamente)
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:12345678@localhost:5432/transito")
 
 engine = None
 session = None
@@ -144,7 +144,6 @@ except Exception as e:
     logger.info("   - PostgreSQL está corriendo (por defecto puerto 5432)")
     logger.info("   - La BD 'transito' existe")
     logger.info("   - Usuario 'postgres' y contraseña son correctos")
-    logger.info(f"   - URL: {DATABASE_URL}")
     engine = None
     session = None
     Base = declarative_base()
