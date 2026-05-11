@@ -1,5 +1,5 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, PlainTextResponse
 from sharepoint import get_sharepoint_files, save_files_to_database
 import logging
 
@@ -11,6 +11,18 @@ app = FastAPI(
     description="API para buscar y registrar archivos Excel desde SharePoint",
     version="1.0.0"
 )
+
+
+@app.post("/webhook")
+async def webhook(request: Request):
+    validation_token = request.query_params.get("validationToken")
+    
+    print("web hook actvado")
+
+    if validation_token:
+        return PlainTextResponse(content=validation_token, status_code=200)
+
+    return JSONResponse(status_code=202, content={"estado": "ok"})
 
 @app.get("/registrar-documento")
 async def registrar_documento():
