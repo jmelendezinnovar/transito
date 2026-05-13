@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import ForeignKey, create_engine, Column, String, DateTime, Integer, func
+from sqlalchemy import ForeignKey, create_engine, Column, String, DateTime, Integer, func, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
 import logging
@@ -40,33 +40,33 @@ try:
         archivo_id = Column(String, ForeignKey("archivos.archivo_id"), nullable=False)
         organismo = Column(String, nullable=False)
         tipo_recaudo = Column(String, nullable=False)
-        fuente = Column(String, nullable=False)
-        fecha_pago = Column(DateTime, nullable=False)
-        recibo = Column(String, nullable=False)
+        fuente = Column(String, nullable=True)
+        fecha_pago = Column(DateTime, nullable=True)
+        recibo = Column(String, nullable=True)
         recibo_pago = Column(String, nullable=True)
-        valor_recibido = Column(String, nullable=False)
+        valor_recibido = Column(String, nullable=True)
         tipo_documento = Column(String, nullable=True)
-        identificacion = Column(String, nullable=False)
+        identificacion = Column(String, nullable=True)
         nombre = Column(String, nullable=True)
         vehiculo_placa = Column(String, nullable=True)
         comparendo = Column(String, nullable=True)
         fecha_comparendo = Column(DateTime, nullable=True)
         año_comparendo = Column(String, nullable=True)
-        prescripcion = Column(String, nullable=False)
-        tipo_comparendo = Column(String, nullable=False)
+        prescripcion = Column(String, nullable=True)
+        tipo_comparendo = Column(String, nullable=True)
         clase_vehiculo = Column(String, nullable=True)
-        tipo = Column(String, nullable=False)
+        tipo = Column(String, nullable=True)
         servicio_vehiculo = Column(String, nullable=True)
-        valor_pagado = Column(String, nullable=False)
-        fecha_distribucion = Column(DateTime, nullable=False)
+        valor_pagado = Column(String, nullable=True)
+        fecha_distribucion = Column(DateTime, nullable=True)
         resolucion_mp = Column(String, nullable=True)
         valor_inicial_cargado = Column(String, nullable=True)
-        concepto = Column(String, nullable=False)
+        concepto = Column(String, nullable=True)
         fecha_cartera = Column(DateTime, nullable=True)
         estado_cartera = Column(String, nullable=True)
         tipo_cartera = Column(String, nullable=True)
         concepto_principal = Column(String, nullable=True)
-        gestion = Column(String, nullable=False)
+        gestion = Column(String, nullable=True)
         descuento_cartera = Column(String, nullable=True)
         descuento_de_intereses = Column(String, nullable=True)
         cantidad_de_descuento_cartera = Column(Integer, nullable=True)
@@ -134,6 +134,26 @@ try:
         created_at = Column(DateTime, default=func.now())
 
     Base.metadata.create_all(engine)
+
+    def _sync_serial_sequence(table_name: str):
+        with engine.begin() as conn:
+            max_id = conn.execute(text(f"SELECT COALESCE(MAX(id), 0) FROM {table_name}")).scalar()
+            if max_id and max_id > 0:
+                conn.execute(
+                    text(f"SELECT setval(pg_get_serial_sequence('{table_name}', 'id'), :max_id, true)"),
+                    {"max_id": max_id}
+                )
+            else:
+                conn.execute(
+                    text(f"SELECT setval(pg_get_serial_sequence('{table_name}', 'id'), 1, false)")
+                )
+
+    for table_name in ("archivos", "recaudos", "carteras", "auditoria"):
+        try:
+            _sync_serial_sequence(table_name)
+        except Exception as sequence_error:
+            logger.warning(f"No se pudo sincronizar la secuencia de {table_name}: {sequence_error}")
+
     logger.info("Tablas creadas exitosamente")
     Session = sessionmaker(bind=engine)
     session = Session()

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.responses import JSONResponse, PlainTextResponse
 from sharepoint import get_sharepoint_files, save_files_to_database
 import logging
@@ -14,9 +14,28 @@ app = FastAPI(
     version="1.0.0"
 )
 
+def procesar_sincronizacion_sharepoint():
+    """Ejecuta la sincronización completa fuera del ciclo de respuesta del webhook."""
+    try:
+        data = get_sharepoint_files()
+        excel_files = data["files"]
+        headers = data["headers"]
+        site_id = data["site_id"]
+        drive_id = data["drive_id"]
+
+        if not excel_files:
+            logger.info("Webhook: no se encontraron archivos Excel para procesar")
+            return
+
+        results = save_files_to_database(excel_files, headers, site_id, drive_id)
+        total_procesados = len(results["guardados"]) + len(results["actualizados"])
+        logger.info(f"Webhook: proceso completado. {total_procesados} archivos procesados")
+    except Exception as e:
+        logger.error(f"Error procesando sincronización en background: {str(e)}")
+
 
 @app.post("/webhook")
-async def webhook(request: Request):
+async def webhook(request: Request, background_tasks: BackgroundTasks):
     validation_token = request.query_params.get("validationToken")
     
     print("web hook actvado")
@@ -24,6 +43,7 @@ async def webhook(request: Request):
     if validation_token:
         return PlainTextResponse(content=validation_token, status_code=200)
 
+    background_tasks.add_task(procesar_sincronizacion_sharepoint)
     return JSONResponse(status_code=202, content={"estado": "ok"})
 
 @app.get("/registrar-documento")
