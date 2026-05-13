@@ -124,6 +124,7 @@ try:
         mp_resolucion = Column(String, nullable=True)
         fecha_mp = Column(String, nullable=True)
         created_at = Column(DateTime, default=func.now())
+        estado_cartera_final = Column(String, nullable=True)
     
     class Auditoria(Base):
         __tablename__ = "auditoria"

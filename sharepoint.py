@@ -3,7 +3,7 @@ import requests
 import os
 from dotenv import load_dotenv
 from models import Archivo, Recaudo, Cartera, Auditoria, session, Session
-from documents import Document
+from documents import Document, WalletStatus
 import pandas as pd
 import logging
 from io import BytesIO
@@ -42,6 +42,21 @@ def extract_organismo(file_path):
     except Exception as e:
         logger.error(f"Error extrayendo organismo de {file_path}: {str(e)}")
         return None
+
+def marcar_carteras_inactivas(organismo: str, tipo_cartera: str):
+    """Marca como inactivas todas las carteras del mismo organismo y tipo antes de reimportar."""
+    try:
+        session.query(Cartera).filter_by(
+            organismo=organismo,
+            tipo_cartera=tipo_cartera
+        ).update(
+            {Cartera.estado_cartera_final: WalletStatus.INACTIVE.value},
+            synchronize_session=False
+        )
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Error marcando carteras inactivas para {organismo}/{tipo_cartera}: {str(e)}")
 
 def get_access_token():
     """Obtiene token de acceso de Microsoft"""
@@ -483,6 +498,7 @@ def get_carteras_multas(file_id, file_path, headers, site_id, drive_id):
             return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
         
         organismo = extract_organismo(file_path)
+        marcar_carteras_inactivas(organismo, "MULTAS")
         total_guardadas = 0
         total_errores = 0
         
@@ -499,12 +515,13 @@ def get_carteras_multas(file_id, file_path, headers, site_id, drive_id):
                     
                     codigo = str(row_dict.get("CODIGO", ""))
                     with session.no_autoflush:
-                        cartera_existente = session.query(Cartera).filter_by(codigo=codigo).first()
+                        cartera_existente = session.query(Cartera).filter_by(codigo=codigo, organismo=organismo).first()
                     
                     if cartera_existente:
                         cartera_existente.archivo_id = file_id
                         cartera_existente.organismo = organismo
                         cartera_existente.tipo_cartera = "MULTAS"
+                        cartera_existente.estado_cartera_final = WalletStatus.ACTIVE.value
                         cartera_existente.fecha = str(row_dict.get("FECHA_COMPARENDO", "")) if row_dict.get("FECHA_COMPARENDO") else None
                         cartera_existente.tipo_comparendo = str(row_dict.get("TIPO_COMPARENDO", "")) if row_dict.get("TIPO_COMPARENDO") else None
                         cartera_existente.clase = str(row_dict.get("CLASE", "")) if row_dict.get("CLASE") else None
@@ -523,6 +540,7 @@ def get_carteras_multas(file_id, file_path, headers, site_id, drive_id):
                             organismo=organismo,
                             codigo=codigo,
                             tipo_cartera="MULTAS",
+                            estado_cartera_final=WalletStatus.ACTIVE.value,
                             fecha=str(row_dict.get("FECHA_COMPARENDO", "")) if row_dict.get("FECHA_COMPARENDO") else None,
                             tipo_comparendo=str(row_dict.get("TIPO_COMPARENDO", "")) if row_dict.get("TIPO_COMPARENDO") else None,
                             clase=str(row_dict.get("CLASE", "")) if row_dict.get("CLASE") else None,
@@ -583,6 +601,7 @@ def get_carteras_derechos(file_id, file_path, headers, site_id, drive_id):
             return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
         
         organismo = extract_organismo(file_path)
+        marcar_carteras_inactivas(organismo, "DERECHOS DE TRANSITO")
         total_guardadas = 0
         total_errores = 0
         
@@ -599,12 +618,13 @@ def get_carteras_derechos(file_id, file_path, headers, site_id, drive_id):
                     
                     codigo = str(row_dict.get("CODIGO", ""))
                     with session.no_autoflush:
-                        cartera_existente = session.query(Cartera).filter_by(codigo=codigo).first()
+                        cartera_existente = session.query(Cartera).filter_by(codigo=codigo, organismo=organismo).first()
                     
                     if cartera_existente:
                         cartera_existente.archivo_id = file_id
                         cartera_existente.organismo = organismo
                         cartera_existente.tipo_cartera = "DERECHOS DE TRANSITO"
+                        cartera_existente.estado_cartera_final = WalletStatus.ACTIVE.value
                         cartera_existente.fecha = str(row_dict.get("FECHA_CARTERA", "")) if row_dict.get("FECHA_CARTERA") else None
                         cartera_existente.valor_inicial_cartera = str(row_dict.get("CARTERA_VALOR_INICIAL", "")) if row_dict.get("CARTERA_VALOR_INICIAL") else None
                         cartera_existente.numero_referencia_cartera = str(row_dict.get("REFERENCIA", "")) if row_dict.get("REFERENCIA") else None
@@ -624,6 +644,7 @@ def get_carteras_derechos(file_id, file_path, headers, site_id, drive_id):
                             organismo=organismo,
                             codigo=codigo,
                             tipo_cartera="DERECHOS DE TRANSITO",
+                            estado_cartera_final=WalletStatus.ACTIVE.value,
                             fecha=str(row_dict.get("FECHA_CARTERA", "")) if row_dict.get("FECHA_CARTERA") else None,
                             valor_inicial_cartera=str(row_dict.get("CARTERA_VALOR_INICIAL", "")) if row_dict.get("CARTERA_VALOR_INICIAL") else None,
                             numero_referencia_cartera=str(row_dict.get("REFERENCIA", "")) if row_dict.get("REFERENCIA") else None,
