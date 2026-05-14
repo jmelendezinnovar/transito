@@ -207,7 +207,6 @@ def batch_insert_records(records: List, batch_size: int = BATCH_SIZE):
                 pass
             logger.error(f"Error en batch insert: {str(e)}")
 
-
 def save_files_to_database(excel_files, headers, site_id, drive_id):
     """Guarda los archivos encontrados en la base de datos"""
     if not session:
@@ -600,6 +599,26 @@ def get_carteras_multas(file_id, file_path, headers, site_id, drive_id):
                         cartera_existente.estado_gestion = safe_text(row_dict, "ESTADO_GESTION")
                         cartera_existente.capital = safe_text(row_dict, "CAPITAL")
                         cartera_existente.total = safe_text(row_dict, "TOTAL")
+                        cartera_existente.resolucion_fecha = safe_text(row_dict, "RESOLUCION_FECHA")
+                        cartera_existente.intereses = safe_text(row_dict, "INTERESES")
+                        cartera_existente.placa = safe_text(row_dict, "PLACA")
+                        cartera_existente.tipo_identificacion = safe_text(row_dict, "TIPO_IDENTIFICACION")
+                        cartera_existente.numero_identificacion = safe_text(row_dict, "NUMERO_IDENTIFICACION")
+                        cartera_existente.nombre_infractor = safe_text(row_dict, "NOMBRE_INFRACTOR")
+                        cartera_existente.numero_comparendo = safe_text(row_dict, "NUMERO_COMPARENDO")
+                        cartera_existente.estado_comparendo = safe_text(row_dict, "ESTADO_COMPARENDO")
+                        cartera_existente.infraccion = safe_text(row_dict, "INFRACCION")
+                        cartera_existente.resolucion_sancion = safe_text(row_dict, "RESOLUCION_SANCION")
+                        cartera_existente.mandamiento_de_pago = safe_text(row_dict, "MANDAMIENTO_DE_PAGO")
+                        cartera_existente.fecha_mandamiento_de_pago = safe_text(row_dict, "FECHA_MANDAMIENTO")
+                        cartera_existente.fecha_de_notificacion = safe_text(row_dict, "NOTIF_FECHA")
+                        cartera_existente.clase_vehiculo = safe_text(row_dict, "CLASE_VEHICULO")
+                        cartera_existente.año_comparendo = safe_text(row_dict, "TO_CHAR(FECHA_COMPARENDO,'YYYY')")
+                        cartera_existente.ciudad = safe_text(row_dict, "NOMBRE_CIUDAD")
+                        cartera_existente.direccion = safe_text(row_dict, "DIR_DIRECCION")
+                        cartera_existente.telefono = safe_text(row_dict, "DIR_TELEFONO")
+                        cartera_existente.movil = safe_text(row_dict, "MOVIL")
+                        cartera_existente.email = safe_text(row_dict, "EMAIL")
                         hay_actualizaciones = True
                     else:
                         cartera = Cartera(
@@ -618,7 +637,27 @@ def get_carteras_multas(file_id, file_path, headers, site_id, drive_id):
                             fecha_inicio_cartera=safe_text(row_dict, "CART_FECHA_INGRESO"),
                             estado_gestion=safe_text(row_dict, "ESTADO_GESTION"),
                             capital=safe_text(row_dict, "CAPITAL"),
-                            total=safe_text(row_dict, "TOTAL")
+                            total=safe_text(row_dict, "TOTAL"),
+                            resolucion_fecha=safe_text(row_dict, "RESOLUCION_FECHA"),
+                            intereses = safe_text(row_dict, "INTERESES"),
+                            placa = safe_text(row_dict, "PLACA"),
+                            tipo_identificacion = safe_text(row_dict, "TIPO_IDENTIFICACION"),
+                            numero_identificacion = safe_text(row_dict, "NUMERO_IDENTIFICACION"),
+                            nombre_infractor = safe_text(row_dict, "NOMBRE_INFRACTOR"),
+                            numero_comparendo = safe_text(row_dict, "NUMERO_COMPARENDO"),
+                            estado_comparendo = safe_text(row_dict, "ESTADO_COMPARENDO"),
+                            infraccion = safe_text(row_dict, "INFRACCION"),
+                            resolucion_sancion = safe_text(row_dict, "RESOLUCION_SANCION"),
+                            mandamiento_de_pago = safe_text(row_dict, "MANDAMIENTO_DE_PAGO"),
+                            fecha_mandamiento_de_pago = safe_text(row_dict, "FECHA_MANDAMIENTO"),
+                            fecha_de_notificacion = safe_text(row_dict, "NOTIF_FECHA"),
+                            clase_vehiculo = safe_text(row_dict, "CLASE_VEHICULO"),
+                            año_comparendo = safe_text(row_dict, "TO_CHAR(FECHA_COMPARENDO,'YYYY')"),
+                            ciudad = safe_text(row_dict, "NOMBRE_CIUDAD"),
+                            direccion = safe_text(row_dict, "DIR_DIRECCION"),
+                            telefono = safe_text(row_dict, "DIR_TELEFONO"),
+                            movil = safe_text(row_dict, "MOVIL"),
+                            email = safe_text(row_dict, "EMAIL")
                         )
                         records.append(cartera)
                     
@@ -714,6 +753,25 @@ def get_carteras_derechos(file_id, file_path, headers, site_id, drive_id):
                         cartera_existente.placa = safe_text(row_dict, "PLACA")
                         cartera_existente.clase = safe_text(row_dict, "CLASE")
                         cartera_existente.servicio = safe_text(row_dict, "SERVICIO")
+                        cartera_existente.tipo_identificacion = safe_text(row_dict, "TIPO_IDENTIFICACION")
+                        cartera_existente.numero_identificacion = safe_text(row_dict, "NUMERO_IDENTIFICACION")
+                        cartera_existente.nombre_infractor = (
+                            ' '.join(
+                                p for p in (
+                                    safe_text(row_dict, "NOMBRE"),
+                                    safe_text(row_dict, "APELLIDO")
+                                ) if p
+                            ) or None
+                        )
+                        cartera_existente.email = safe_text(row_dict, "EMAIL")
+                        cartera_existente.telefono = safe_text(row_dict, "TELEFONO_MOVIL")
+                        cartera_existente.fecha_propietario = safe_text(row_dict, "FECHA_PROPIETARIO")
+                        cartera_existente.filtro_coactivo = safe_text(row_dict, "FILTRO_COACTIVO")
+                        cartera_existente.clase_vehiculo = safe_text(row_dict, "CLASE_VEHICULO")
+                        cartera_existente.direccion = safe_text(row_dict, "DIRECCION")
+                        cartera_existente.mp_resolucion = safe_text(row_dict, "MP_RESOLUCION")
+                        cartera_existente.fecha_mp = safe_text(row_dict, "FECHA_MP")
+
                         hay_actualizaciones = True
                     else:
                         cartera = Cartera(
@@ -733,7 +791,25 @@ def get_carteras_derechos(file_id, file_path, headers, site_id, drive_id):
                             intereses=safe_text(row_dict, "INTERESES"),
                             placa=safe_text(row_dict, "PLACA"),
                             clase=safe_text(row_dict, "CLASE"),
-                            servicio=safe_text(row_dict, "SERVICIO")
+                            servicio=safe_text(row_dict, "SERVICIO"),
+                            tipo_identificacion = safe_text(row_dict, "TIPO_IDENTIFICACION"),
+                            numero_identificacion = safe_text(row_dict, "NUMERO_IDENTIFICACION"),
+                            nombre_infractor = (
+                                ' '.join(
+                                    p for p in (
+                                        safe_text(row_dict, "NOMBRE"),
+                                        safe_text(row_dict, "APELLIDO")
+                                    ) if p
+                                ) or None
+                            ),
+                            email = safe_text(row_dict, "EMAIL"),
+                            telefono = safe_text(row_dict, "TELEFONO_MOVIL"),
+                            fecha_propietario = safe_text(row_dict, "FECHA_PROPIETARIO"),
+                            filtro_coactivo = safe_text(row_dict, "FILTRO_COACTIVO"),
+                            clase_vehiculo = safe_text(row_dict, "CLASE_VEHICULO"),
+                            direccion = safe_text(row_dict, "DIRECCION"),
+                            mp_resolucion = safe_text(row_dict, "MP_RESOLUCION"),
+                            fecha_mp = safe_text(row_dict, "FECHA_MP")
                         )
                         records.append(cartera)
                     
