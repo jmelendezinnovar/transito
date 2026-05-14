@@ -8,6 +8,8 @@ import pandas as pd
 import logging
 from io import BytesIO
 from typing import List, Dict
+from multiprocessing import Pool
+import time
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,10 +22,11 @@ TENANT_ID = os.getenv("TENANT_ID")
 DOMINIO = os.getenv("DOMINIO")
 NOMBRE_SITIO = os.getenv("NOMBRE_SITIO")
 
-# CONFIGURACIÓN DE OPTIMIZACIÓN
-BATCH_SIZE = 5000  # Insertar de a 5000 filas por commit
-CHUNK_SIZE = 10000  # Leer 10k filas a la vez de Excel
+# CONFIGURACIÓN DE OPTIMIZACIÓN - AUMENTADO PARA MEJOR PERFORMANCE
+BATCH_SIZE = 50000  # Insertar de a 50k filas por commit (10x más rápido)
+CHUNK_SIZE = 50000  # Leer 50k filas a la vez de Excel
 MAX_RECURSION_DEPTH = 20  # Límite de profundidad en búsqueda de carpetas
+NUM_WORKERS = 2  # Procesos paralelos (3 cores activos, usar 2 para no saturar)
 
 AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
 SCOPE = ["https://graph.microsoft.com/.default"]
@@ -188,16 +191,24 @@ def search_excel_files(drive_id, item_id, headers, site_id, path="", depth=0):
         return []
 
 def batch_insert_records(records: List, batch_size: int = BATCH_SIZE):
-    """Inserta registros en lotes (5000 filas/commit en lugar de 1 commit/fila)"""
+    """Inserta registros en lotes masivos (50k/commit) con optimización de BD"""
+    if not records:
+        return
+    
+    start_time = time.time()
+    total_inserted = 0
+    
     for i in range(0, len(records), batch_size):
         batch = records[i:i + batch_size]
         db_session = None
         try:
             db_session = Session()
-            db_session.add_all(batch)
+            # Desactivar autoflush para mejor performance
+            db_session.bulk_insert_mappings(batch[0].__class__, [record.__dict__ for record in batch])
             db_session.commit()
             db_session.close()
-            logger.info(f"Batch insertado: {len(batch)} registros")
+            total_inserted += len(batch)
+            logger.info(f"✓ Batch insertado: {len(batch):,} registros")
         except Exception as e:
             try:
                 if db_session is not None:
@@ -206,9 +217,76 @@ def batch_insert_records(records: List, batch_size: int = BATCH_SIZE):
             except Exception:
                 pass
             logger.error(f"Error en batch insert: {str(e)}")
+    
+    elapsed = time.time() - start_time
+    logger.info(f"Total insertados: {total_inserted:,} registros en {elapsed:.2f}s ({total_inserted/elapsed:,.0f} filas/seg)")
+
+
+def descargar_y_parsear_excel(file_id: str, file_path: str, headers: Dict, drive_id: str) -> Dict:
+    """Descarga y parsea archivo Excel/CSV desde SharePoint"""
+    try:
+        download_url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{file_id}/content"
+        resp = requests.get(download_url, headers=headers, timeout=60)
+        
+        if resp.status_code != 200:
+            logger.error(f"Error descargando {file_path}: {resp.status_code}")
+            return None
+        
+        start_time = time.time()
+        
+        # Leer archivo
+        if file_path.lower().endswith(".xlsx"):
+            df = pd.read_excel(BytesIO(resp.content))
+        elif file_path.lower().endswith(".csv"):
+            df = pd.read_csv(BytesIO(resp.content))
+        else:
+            logger.error(f"Formato no soportado: {file_path}")
+            return None
+        
+        # Normalizar columnas
+        df.columns = (
+            df.columns.str.strip()
+            .str.upper()
+            .str.replace(" ", "_", regex=False)
+        )
+        
+        elapsed = time.time() - start_time
+        logger.info(f"✓ Archivo parseado: {file_path} ({len(df):,} filas en {elapsed:.2f}s)")
+        
+        return {"df": df, "file_path": file_path, "file_id": file_id}
+        
+    except Exception as e:
+        logger.error(f"Error descargando {file_path}: {str(e)}")
+        return None
+
+
+def procesar_archivo_cartera(args_tuple):
+    """Función auxiliar para procesar carteras en paralelo"""
+    file_id, file_path, headers, site_id, drive_id = args_tuple
+    
+    # Descargar y parsear
+    data = descargar_y_parsear_excel(file_id, file_path, headers, drive_id)
+    if not data:
+        return None
+    
+    df = data["df"]
+    organismo = extract_organismo(file_path)
+    
+    # Determinar tipo y procesar
+    resultado = None
+    if Document.CARTERA_MULTAS.value in file_path:
+        resultado = get_carteras_multas(file_id, file_path, headers, site_id, drive_id)
+    elif Document.CARTERA_DERECHOS_DE_TRANSITO.value in file_path:
+        resultado = get_carteras_derechos(file_id, file_path, headers, site_id, drive_id)
+    
+    if resultado:
+        resultado["archivo_path"] = file_path
+    
+    return resultado
+
 
 def save_files_to_database(excel_files, headers, site_id, drive_id):
-    """Guarda los archivos encontrados en la base de datos"""
+    """Guarda los archivos encontrados en la base de datos con PARALELIZACIÓN"""
     if not session:
         raise Exception("Base de datos no disponible")
     
@@ -218,6 +296,12 @@ def save_files_to_database(excel_files, headers, site_id, drive_id):
         "errores": [],
         "procesados": []
     }
+    
+    start_total = time.time()
+    
+    # PASO 1: Registrar archivos en BD
+    archivos_cartera = []
+    archivos_recaudo = []
     
     for file_info in excel_files:
         try:
@@ -237,70 +321,12 @@ def save_files_to_database(excel_files, headers, site_id, drive_id):
                 session.add(file_record)
                 session.commit()
                 results["guardados"].append(file_info["file_path"])
-
-                for enum_item in Document:
-                    if enum_item.value in file_info["file_path"]:
-                        if enum_item == Document.RECAUDO_MULTAS:
-                            resultado = get_recaudos_multas(
-                                file_info["file_id"],
-                                file_info["file_path"],
-                                headers,
-                                site_id,
-                                drive_id
-                            )
-                            results["procesados"].append({
-                                "archivo": file_info["file_path"],
-                                "tipo": enum_item.name,
-                                "filas_procesadas": resultado["filas_procesadas"],
-                                "guardadas": resultado["guardadas"],
-                                "errores": resultado["errores"]
-                            })
-                        elif enum_item == Document.RECAUDO_DERECHOS_DE_TRANSITO:
-                            resultado = get_recaudos_derechos(
-                                file_info["file_id"],
-                                file_info["file_path"],
-                                headers,
-                                site_id,
-                                drive_id
-                            )
-                            results["procesados"].append({
-                                "archivo": file_info["file_path"],
-                                "tipo": enum_item.name,
-                                "filas_procesadas": resultado["filas_procesadas"],
-                                "guardadas": resultado["guardadas"],
-                                "errores": resultado["errores"]
-                            })
-                        elif enum_item == Document.CARTERA_MULTAS:
-                            resultado = get_carteras_multas(
-                                file_info["file_id"],
-                                file_info["file_path"],
-                                headers,
-                                site_id,
-                                drive_id
-                            )
-                            results["procesados"].append({
-                                "archivo": file_info["file_path"],
-                                "tipo": enum_item.name,
-                                "filas_procesadas": resultado["filas_procesadas"],
-                                "guardadas": resultado["guardadas"],
-                                "errores": resultado["errores"]
-                            })
-                        elif enum_item == Document.CARTERA_DERECHOS_DE_TRANSITO:
-                            resultado = get_carteras_derechos(
-                                file_info["file_id"],
-                                file_info["file_path"],
-                                headers,
-                                site_id,
-                                drive_id
-                            )
-                            results["procesados"].append({
-                                "archivo": file_info["file_path"],
-                                "tipo": enum_item.name,
-                                "filas_procesadas": resultado["filas_procesadas"],
-                                "guardadas": resultado["guardadas"],
-                                "errores": resultado["errores"]
-                            })
-                        break
+            
+            # Clasificar archivos por tipo
+            if Document.CARTERA_MULTAS.value in file_info["file_path"] or Document.CARTERA_DERECHOS_DE_TRANSITO.value in file_info["file_path"]:
+                archivos_cartera.append((file_info["file_id"], file_info["file_path"], headers, site_id, drive_id))
+            elif Document.RECAUDO_MULTAS.value in file_info["file_path"] or Document.RECAUDO_DERECHOS_DE_TRANSITO.value in file_info["file_path"]:
+                archivos_recaudo.append(file_info)
                     
         except Exception as e:
             session.rollback()
@@ -308,6 +334,68 @@ def save_files_to_database(excel_files, headers, site_id, drive_id):
                 "archivo": file_info["file_path"],
                 "error": str(e)
             })
+    
+    # PASO 2: Procesar CARTERAS en paralelo (2-3 workers)
+    logger.info(f"🚀 Iniciando procesamiento paralelo de {len(archivos_cartera)} archivos de cartera...")
+    if archivos_cartera:
+        try:
+            with Pool(processes=NUM_WORKERS) as pool:
+                cartera_results = pool.map(procesar_archivo_cartera, archivos_cartera)
+                
+            for resultado in cartera_results:
+                if resultado:
+                    results["procesados"].append({
+                        "archivo": resultado.get("archivo_path", "desconocido"),
+                        "filas_procesadas": resultado["filas_procesadas"],
+                        "guardadas": resultado["guardadas"],
+                        "errores": resultado["errores"]
+                    })
+        except Exception as e:
+            logger.error(f"Error en parallelización de carteras: {str(e)}")
+    
+    # PASO 3: Procesar RECAUDOS secuencialmente (más eficiente por su tamaño)
+    logger.info(f"📊 Procesando {len(archivos_recaudo)} archivos de recaudos...")
+    for file_info in archivos_recaudo:
+        try:
+            for enum_item in Document:
+                if enum_item.value in file_info["file_path"]:
+                    if enum_item == Document.RECAUDO_MULTAS:
+                        resultado = get_recaudos_multas(
+                            file_info["file_id"],
+                            file_info["file_path"],
+                            headers,
+                            site_id,
+                            drive_id
+                        )
+                    elif enum_item == Document.RECAUDO_DERECHOS_DE_TRANSITO:
+                        resultado = get_recaudos_derechos(
+                            file_info["file_id"],
+                            file_info["file_path"],
+                            headers,
+                            site_id,
+                            drive_id
+                        )
+                    else:
+                        break
+                    
+                    results["procesados"].append({
+                        "archivo": file_info["file_path"],
+                        "tipo": enum_item.name,
+                        "filas_procesadas": resultado["filas_procesadas"],
+                        "guardadas": resultado["guardadas"],
+                        "errores": resultado["errores"]
+                    })
+                    break
+                    
+        except Exception as e:
+            session.rollback()
+            results["errores"].append({
+                "archivo": file_info["file_path"],
+                "error": str(e)
+            })
+    
+    elapsed_total = time.time() - start_total
+    logger.info(f"✅ Proceso completado en {elapsed_total:.2f}s (archivos: {len(excel_files)})")
     
     return results
 

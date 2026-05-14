@@ -1,0 +1,807 @@
+{
+    "usuarios": [
+        {
+            "id": "361d95dd-afa5-4d46-baf5-84f18b2fd9af",
+            "nombre": "Adrian Manuel De Horta Díaz",
+            "correo": "analistadesistemas@santosdepiedra.com.co"
+        }
+    ],
+    "areas": [
+        {
+            "id": "u_BlD29aFkuLwHDijmttiWUAFnY5",
+            "nombre": "PROYECTOS"
+        },
+        {
+            "id": "ek3itgnw-UG-smilC9f7wmUAAi_j",
+            "nombre": "ADMINISTRACION"
+        },
+        {
+            "id": "LYQW0YUCbUa_uPXPl68Dn2UABlrP",
+            "nombre": "HOTEL PELEGRINO "
+        },
+        {
+            "id": "Vj1Mp8FP00a0LO8aAQNLqGUAFJZd",
+            "nombre": "HOTEL SANTO TORIBIO"
+        },
+        {
+            "id": "a86b1196z0SLAPW8k5srlWUAPPcw",
+            "nombre": "HOTEL MONAGUILLO"
+        },
+        {
+            "id": "CwhXzpkJ1E6yFIzgSv4r-GUALMMa",
+            "nombre": "HOTEL CAPELLAN"
+        }
+    ],
+    "tareas": [
+        {
+            "taskId": "d99ElIEifkW42_vJfIJ34GUAII29",
+            "title": "ORGANIZAR INFORMACION TELEFONOS CORPORATIVOS ",
+            "bucketId": "ek3itgnw-UG-smilC9f7wmUAAi_j",
+            "percentComplete": 50,
+            "priority": 5,
+            "status": "En curso",
+            "dueDateTime": "",
+            "startDateTime": "",
+            "createdDateTime": "2026-05-08T16:52:48.2284177Z",
+            "assignments": {
+                "361d95dd-afa5-4d46-baf5-84f18b2fd9af": {
+                    "@odata.type": "#microsoft.graph.plannerAssignment",
+                    "assignedDateTime": "2026-05-08T20:15:02.4796116Z",
+                    "orderHint": "8584233356430211803PG",
+                    "assignedBy": {
+                        "user": {
+                            "displayName": null,
+                            "id": "361d95dd-afa5-4d46-baf5-84f18b2fd9af"
+                        },
+                        "application": {
+                            "displayName": null,
+                            "id": "75f31797-37c9-498e-8dc9-53c16a36afca"
+                        }
+                    }
+                }
+            },
+            "categorias": [
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "TAREAS",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+            ]
+        },
+        {
+            "taskId": "ghyfjhEIWU65zKXa7YQI0mUAEwrp",
+            "title": "Cambio de equipos de impresión",
+            "bucketId": "u_BlD29aFkuLwHDijmttiWUAFnY5",
+            "percentComplete": 0,
+            "priority": 5,
+            "status": "No iniciado",
+            "dueDateTime": "",
+            "startDateTime": "2026-04-01T10:00:00Z",
+            "createdDateTime": "2026-05-08T16:52:48.2323787Z",
+            "assignments": {
+                "361d95dd-afa5-4d46-baf5-84f18b2fd9af": {
+                    "@odata.type": "#microsoft.graph.plannerAssignment",
+                    "assignedDateTime": "2026-05-14T21:28:52.0772005Z",
+                    "orderHint": "8584228128134248065Pu",
+                    "assignedBy": {
+                        "user": {
+                            "displayName": null,
+                            "id": "361d95dd-afa5-4d46-baf5-84f18b2fd9af"
+                        },
+                        "application": {
+                            "displayName": null,
+                            "id": "75f31797-37c9-498e-8dc9-53c16a36afca"
+                        }
+                    }
+                }
+            },
+            "categorias": [
+                null,
+                null,
+                null,
+                null,
+                null,
+                "PROYECTOS",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+            ]
+        },
+        {
+            "taskId": "LtHNxwZQYUKURRh0OoC5ymUAKUBV",
+            "title": "Migracion de vware a proxmox ",
+            "bucketId": "u_BlD29aFkuLwHDijmttiWUAFnY5",
+            "percentComplete": 0,
+            "priority": 5,
+            "status": "No iniciado",
+            "dueDateTime": "",
+            "startDateTime": "2026-04-10T10:00:00Z",
+            "createdDateTime": "2026-05-08T16:52:48.2251312Z",
+            "assignments": {
+                "361d95dd-afa5-4d46-baf5-84f18b2fd9af": {
+                    "@odata.type": "#microsoft.graph.plannerAssignment",
+                    "assignedDateTime": "2026-05-08T20:14:57.8753029Z",
+                    "orderHint": "8584233356476242955PO",
+                    "assignedBy": {
+                        "user": {
+                            "displayName": null,
+                            "id": "361d95dd-afa5-4d46-baf5-84f18b2fd9af"
+                        },
+                        "application": {
+                            "displayName": null,
+                            "id": "75f31797-37c9-498e-8dc9-53c16a36afca"
+                        }
+                    }
+                }
+            },
+            "categorias": [
+                null,
+                null,
+                "INFRAESTRUCTURA",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+            ]
+        },
+        {
+            "taskId": "8q25JJmX8EOM-Q8P6QIbZmUAPYng",
+            "title": "cámaras de seguridad en hoteles ",
+            "bucketId": "u_BlD29aFkuLwHDijmttiWUAFnY5",
+            "percentComplete": 0,
+            "priority": 3,
+            "status": "No iniciado",
+            "dueDateTime": "",
+            "startDateTime": "2026-03-01T10:00:00Z",
+            "createdDateTime": "2026-05-08T16:52:48.2305682Z",
+            "assignments": {
+                "361d95dd-afa5-4d46-baf5-84f18b2fd9af": {
+                    "@odata.type": "#microsoft.graph.plannerAssignment",
+                    "assignedDateTime": "2026-05-14T21:28:46.7815828Z",
+                    "orderHint": "8584228128187217556PB",
+                    "assignedBy": {
+                        "user": {
+                            "displayName": null,
+                            "id": "361d95dd-afa5-4d46-baf5-84f18b2fd9af"
+                        },
+                        "application": {
+                            "displayName": null,
+                            "id": "75f31797-37c9-498e-8dc9-53c16a36afca"
+                        }
+                    }
+                }
+            },
+            "categorias": [
+                null,
+                null,
+                null,
+                null,
+                null,
+                "PROYECTOS",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+            ]
+        },
+        {
+            "taskId": "Jc0GD9jEh0uZO04GgglYkmUAKmwU",
+            "title": "Gabinete cocina y 3 piso ",
+            "bucketId": "u_BlD29aFkuLwHDijmttiWUAFnY5",
+            "percentComplete": 0,
+            "priority": 5,
+            "status": "No iniciado",
+            "dueDateTime": "2026-06-30T10:00:00Z",
+            "startDateTime": "2026-04-16T10:00:00Z",
+            "createdDateTime": "2026-05-08T16:52:48.238035Z",
+            "assignments": {
+                "361d95dd-afa5-4d46-baf5-84f18b2fd9af": {
+                    "@odata.type": "#microsoft.graph.plannerAssignment",
+                    "assignedDateTime": "2026-05-08T20:14:52.2700644Z",
+                    "orderHint": "8584233356532382461P-",
+                    "assignedBy": {
+                        "user": {
+                            "displayName": null,
+                            "id": "361d95dd-afa5-4d46-baf5-84f18b2fd9af"
+                        },
+                        "application": {
+                            "displayName": null,
+                            "id": "75f31797-37c9-498e-8dc9-53c16a36afca"
+                        }
+                    }
+                }
+            },
+            "categorias": [
+                null,
+                null,
+                null,
+                null,
+                null,
+                "PROYECTOS",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+            ]
+        },
+        {
+            "taskId": "sf1BA-Z6x0CjZCN3kkdicmUACTGz",
+            "title": "Biométrico Santos de piedra",
+            "bucketId": "u_BlD29aFkuLwHDijmttiWUAFnY5",
+            "percentComplete": 0,
+            "priority": 9,
+            "status": "No iniciado",
+            "dueDateTime": "",
+            "startDateTime": "2026-04-16T10:00:00Z",
+            "createdDateTime": "2026-05-08T16:52:48.2247968Z",
+            "assignments": {
+                "361d95dd-afa5-4d46-baf5-84f18b2fd9af": {
+                    "@odata.type": "#microsoft.graph.plannerAssignment",
+                    "assignedDateTime": "2026-05-08T16:59:07.2063228Z",
+                    "orderHint": "8584233473983004156Pk",
+                    "assignedBy": {
+                        "user": {
+                            "displayName": null,
+                            "id": "361d95dd-afa5-4d46-baf5-84f18b2fd9af"
+                        },
+                        "application": {
+                            "displayName": null,
+                            "id": "75f31797-37c9-498e-8dc9-53c16a36afca"
+                        }
+                    }
+                }
+            },
+            "categorias": [
+                null,
+                null,
+                null,
+                null,
+                null,
+                "PROYECTOS",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+            ]
+        },
+        {
+            "taskId": "OLmVaYl8YkahWqf0dck8aGUAHKae",
+            "title": "[SANTO TORIBIO] MANTENIMIENTO RACK ",
+            "bucketId": "Vj1Mp8FP00a0LO8aAQNLqGUAFJZd",
+            "percentComplete": 50,
+            "priority": 5,
+            "status": "En curso",
+            "dueDateTime": "",
+            "startDateTime": "2026-03-28T10:00:00Z",
+            "createdDateTime": "2026-05-08T16:52:48.2151766Z",
+            "assignments": {
+                "361d95dd-afa5-4d46-baf5-84f18b2fd9af": {
+                    "@odata.type": "#microsoft.graph.plannerAssignment",
+                    "assignedDateTime": "2026-05-08T20:14:36.5775798Z",
+                    "orderHint": "8584233356689275000P+",
+                    "assignedBy": {
+                        "user": {
+                            "displayName": null,
+                            "id": "361d95dd-afa5-4d46-baf5-84f18b2fd9af"
+                        },
+                        "application": {
+                            "displayName": null,
+                            "id": "75f31797-37c9-498e-8dc9-53c16a36afca"
+                        }
+                    }
+                }
+            },
+            "categorias": [
+                null,
+                null,
+                "INFRAESTRUCTURA",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+            ]
+        },
+        {
+            "taskId": "zYJ58_Znp0OTO2wCd9OtaWUABEWf",
+            "title": "[MONAGUILLO] MANTENIMIENTO RACK ",
+            "bucketId": "a86b1196z0SLAPW8k5srlWUAPPcw",
+            "percentComplete": 50,
+            "priority": 5,
+            "status": "En curso",
+            "dueDateTime": "",
+            "startDateTime": "2026-03-21T10:00:00Z",
+            "createdDateTime": "2026-05-08T16:52:48.2333669Z",
+            "assignments": {
+                "361d95dd-afa5-4d46-baf5-84f18b2fd9af": {
+                    "@odata.type": "#microsoft.graph.plannerAssignment",
+                    "assignedDateTime": "2026-05-08T20:14:41.756691Z",
+                    "orderHint": "8584233356637649504P(",
+                    "assignedBy": {
+                        "user": {
+                            "displayName": null,
+                            "id": "361d95dd-afa5-4d46-baf5-84f18b2fd9af"
+                        },
+                        "application": {
+                            "displayName": null,
+                            "id": "75f31797-37c9-498e-8dc9-53c16a36afca"
+                        }
+                    }
+                }
+            },
+            "categorias": [
+                null,
+                null,
+                "INFRAESTRUCTURA",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+            ]
+        },
+        {
+            "taskId": "OpxiEjHAgEmiiBZwNc7hW2UACQYk",
+            "title": "[CAPELLAN] MANTENIMIENTO RAK",
+            "bucketId": "CwhXzpkJ1E6yFIzgSv4r-GUALMMa",
+            "percentComplete": 0,
+            "priority": 5,
+            "status": "No iniciado",
+            "dueDateTime": "",
+            "startDateTime": "2026-03-20T10:00:00Z",
+            "createdDateTime": "2026-05-08T16:52:48.2215882Z",
+            "assignments": {
+                "361d95dd-afa5-4d46-baf5-84f18b2fd9af": {
+                    "@odata.type": "#microsoft.graph.plannerAssignment",
+                    "assignedDateTime": "2026-05-08T20:14:46.7161202Z",
+                    "orderHint": "8584233356587878882P,",
+                    "assignedBy": {
+                        "user": {
+                            "displayName": null,
+                            "id": "361d95dd-afa5-4d46-baf5-84f18b2fd9af"
+                        },
+                        "application": {
+                            "displayName": null,
+                            "id": "75f31797-37c9-498e-8dc9-53c16a36afca"
+                        }
+                    }
+                }
+            },
+            "categorias": [
+                null,
+                null,
+                "INFRAESTRUCTURA",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+            ]
+        },
+        {
+            "taskId": "BjM23QhhEEGyB_mdMtMe-mUAJXeo",
+            "title": "DOMINIO A.CONT,CORD.COS,MANT",
+            "bucketId": "ek3itgnw-UG-smilC9f7wmUAAi_j",
+            "percentComplete": 100,
+            "priority": 5,
+            "status": "Completo",
+            "dueDateTime": "2026-05-13T10:00:00Z",
+            "startDateTime": "2026-05-13T10:00:00Z",
+            "createdDateTime": "2026-05-14T21:35:41.6493853Z",
+            "assignments": {
+                "361d95dd-afa5-4d46-baf5-84f18b2fd9af": {
+                    "@odata.type": "#microsoft.graph.plannerAssignment",
+                    "assignedDateTime": "2026-05-14T21:51:23.2228287Z",
+                    "orderHint": "8584228114622861174P&",
+                    "assignedBy": {
+                        "user": {
+                            "displayName": null,
+                            "id": "361d95dd-afa5-4d46-baf5-84f18b2fd9af"
+                        },
+                        "application": {
+                            "displayName": null,
+                            "id": "75f31797-37c9-498e-8dc9-53c16a36afca"
+                        }
+                    }
+                }
+            },
+            "categorias": [
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "TAREAS",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+            ]
+        },
+        {
+            "taskId": "FWEp538mtkG4wOQ84Htek2UAKAED",
+            "title": "DOMINIO CHEF,AYB",
+            "bucketId": "ek3itgnw-UG-smilC9f7wmUAAi_j",
+            "percentComplete": 100,
+            "priority": 5,
+            "status": "Completo",
+            "dueDateTime": "2026-05-14T10:00:00Z",
+            "startDateTime": "2026-05-14T10:00:00Z",
+            "createdDateTime": "2026-05-14T21:35:27.5256861Z",
+            "assignments": {
+                "361d95dd-afa5-4d46-baf5-84f18b2fd9af": {
+                    "@odata.type": "#microsoft.graph.plannerAssignment",
+                    "assignedDateTime": "2026-05-14T21:39:27.5690068Z",
+                    "orderHint": "8584228121783530299PH",
+                    "assignedBy": {
+                        "user": {
+                            "displayName": null,
+                            "id": "361d95dd-afa5-4d46-baf5-84f18b2fd9af"
+                        },
+                        "application": {
+                            "displayName": null,
+                            "id": "75f31797-37c9-498e-8dc9-53c16a36afca"
+                        }
+                    }
+                }
+            },
+            "categorias": [
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "TAREAS",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+            ]
+        },
+        {
+            "taskId": "Qbk5D6DvYkSArke-AqRRZmUAHB4r",
+            "title": "DOMINIO CORPORATIVO",
+            "bucketId": "CwhXzpkJ1E6yFIzgSv4r-GUALMMa",
+            "percentComplete": 100,
+            "priority": 5,
+            "status": "Completo",
+            "dueDateTime": "2026-05-12T10:00:00Z",
+            "startDateTime": "2026-05-12T10:00:00Z",
+            "createdDateTime": "2026-05-14T21:24:39.7446179Z",
+            "assignments": {
+                "361d95dd-afa5-4d46-baf5-84f18b2fd9af": {
+                    "@odata.type": "#microsoft.graph.plannerAssignment",
+                    "assignedDateTime": "2026-05-14T21:25:23.8471262Z",
+                    "orderHint": "8584228130216552066Ph",
+                    "assignedBy": {
+                        "user": {
+                            "displayName": null,
+                            "id": "361d95dd-afa5-4d46-baf5-84f18b2fd9af"
+                        },
+                        "application": {
+                            "displayName": null,
+                            "id": "75f31797-37c9-498e-8dc9-53c16a36afca"
+                        }
+                    }
+                }
+            },
+            "categorias": [
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "TAREAS",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+            ]
+        },
+        {
+            "taskId": "FuuXnxumlUqUUFyFTNXCL2UAKZqF",
+            "title": "DOMINIO AU,AL,CO,FRO",
+            "bucketId": "ek3itgnw-UG-smilC9f7wmUAAi_j",
+            "percentComplete": 100,
+            "priority": 5,
+            "status": "Completo",
+            "dueDateTime": "",
+            "startDateTime": "",
+            "createdDateTime": "2026-05-14T21:31:44.8317242Z",
+            "assignments": {
+                "361d95dd-afa5-4d46-baf5-84f18b2fd9af": {
+                    "@odata.type": "#microsoft.graph.plannerAssignment",
+                    "assignedDateTime": "2026-05-14T21:51:12.4358372Z",
+                    "orderHint": "8584228114730675031PE",
+                    "assignedBy": {
+                        "user": {
+                            "displayName": null,
+                            "id": "361d95dd-afa5-4d46-baf5-84f18b2fd9af"
+                        },
+                        "application": {
+                            "displayName": null,
+                            "id": "75f31797-37c9-498e-8dc9-53c16a36afca"
+                        }
+                    }
+                }
+            },
+            "categorias": [
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "TAREAS",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+            ]
+        },
+        {
+            "taskId": "y_RGwXHpK06J-RTXSZsUDWUAIL1o",
+            "title": "DOMINIO SST,ANGH",
+            "bucketId": "ek3itgnw-UG-smilC9f7wmUAAi_j",
+            "percentComplete": 100,
+            "priority": 5,
+            "status": "Completo",
+            "dueDateTime": "2026-05-11T10:00:00Z",
+            "startDateTime": "2026-05-11T10:00:00Z",
+            "createdDateTime": "2026-05-12T19:10:07.2048941Z",
+            "assignments": {
+                "361d95dd-afa5-4d46-baf5-84f18b2fd9af": {
+                    "@odata.type": "#microsoft.graph.plannerAssignment",
+                    "assignedDateTime": "2026-05-12T19:10:31.9858402Z",
+                    "orderHint": "8584229939135258844P,",
+                    "assignedBy": {
+                        "user": {
+                            "displayName": null,
+                            "id": "361d95dd-afa5-4d46-baf5-84f18b2fd9af"
+                        },
+                        "application": {
+                            "displayName": null,
+                            "id": "75f31797-37c9-498e-8dc9-53c16a36afca"
+                        }
+                    }
+                }
+            },
+            "categorias": [
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "TAREAS",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+            ]
+        }
+    ]
+}
