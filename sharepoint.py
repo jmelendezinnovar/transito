@@ -464,6 +464,8 @@ def get_recaudos_derechos(file_id, file_path, headers, site_id, drive_id):
             for row in df_chunk.itertuples(index=False, name='Record'):
                 try:
                     row_dict = row._asdict()
+
+                    print(row_dict.keys())
                     
                     recaudo = Recaudo(
                         archivo_id=file_id,
@@ -498,8 +500,8 @@ def get_recaudos_derechos(file_id, file_path, headers, site_id, drive_id):
                         gestion=safe_text(row_dict, "GESTION") or safe_text(row_dict, "GESTIÓN") or safe_text(row_dict, "ESTADO_GESTION"),
                         descuento_cartera=safe_text(row_dict, "DESCUENTO_CARTERA"),
                         descuento_de_intereses=safe_text(row_dict, "DES_INTERESES"),
-                        cantidad_de_descuento_cartera=safe_int(row_dict, "CANT_DESTO_CARTERA"),
-                        cantidad_de_descuento_de_intereses=safe_int(row_dict, "CANT_DES_INTERESES"),
+                        cantidad_de_descuento_cartera=safe_int(row_dict, "CANT_DESTO_CARTERA") or safe_int(row_dict, "CANT_DESCUENTO_CARTERA"),
+                        cantidad_de_descuento_de_intereses=safe_int(row_dict, "CANT_DES_INTERESES") or safe_int(row_dict, "CANT_DESCUENTO_INTERESES"),
                         resolucion_sancion=safe_text(row_dict, "RESOLUCIÓN_SANCIÓN") or safe_text(row_dict, "RESOLUCION_SANCION"),
                         fecha_resolucion_sancion=safe_datetime(row_dict, "FECHA_RESOLUCION_SANCIÓN") or safe_datetime(row_dict, "FECHA_RESOLUCION_SANCION"),
                         valor_pagado_de_intereses=safe_text(row_dict, "VALOR_PAGADO_INTERESES"),
