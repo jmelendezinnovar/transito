@@ -452,7 +452,6 @@ def get_recaudos_derechos(file_id, file_path, headers, site_id, drive_id):
             return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
         
         organismo = extract_organismo(file_path)
-        marcar_carteras_inactivas(organismo, "DERECHOS DE TRANSITO")
         total_guardadas = 0
         total_errores = 0
         
@@ -462,52 +461,53 @@ def get_recaudos_derechos(file_id, file_path, headers, site_id, drive_id):
             logger.info(f"Procesando filas {chunk_start} a {chunk_start + len(df_chunk)} ({len(df_chunk)} filas)")
             
             records = []
-            hay_actualizaciones = False
             for row in df_chunk.itertuples(index=False, name='Record'):
                 try:
                     row_dict = row._asdict()
                     
-                    codigo = str(row_dict.get("CODIGO", ""))
-                    with session.no_autoflush:
-                        cartera_existente = session.query(Cartera).filter_by(codigo=codigo, organismo=organismo).first()
-                    
-                    if cartera_existente:
-                        cartera_existente.archivo_id = file_id
-                        cartera_existente.organismo = organismo
-                        cartera_existente.tipo_cartera = "MULTAS"
-                        cartera_existente.estado_cartera_final = WalletStatus.ACTIVE.value
-                        cartera_existente.fecha = safe_text(row_dict, "FECHA_COMPARENDO")
-                        cartera_existente.tipo_comparendo = safe_text(row_dict, "TIPO_COMPARENDO")
-                        cartera_existente.clase = safe_text(row_dict, "CLASE")
-                        cartera_existente.servicio = safe_text(row_dict, "SERVICIO")
-                        cartera_existente.valor_inicial_cartera = safe_text(row_dict, "CART_VALOR_INICIAL")
-                        cartera_existente.numero_referencia_cartera = safe_text(row_dict, "CART_NRO_REFERENCIA")
-                        cartera_existente.estado_cartera = safe_text(row_dict, "ESTADO_CARTERA")
-                        cartera_existente.fecha_inicio_cartera = safe_text(row_dict, "CART_FECHA_INGRESO")
-                        cartera_existente.estado_gestion = safe_text(row_dict, "ESTADO_GESTION")
-                        cartera_existente.capital = safe_text(row_dict, "CAPITAL")
-                        cartera_existente.total = safe_text(row_dict, "TOTAL")
-                        hay_actualizaciones = True
-                    else:
-                        cartera = Cartera(
-                            archivo_id=file_id,
-                            organismo=organismo,
-                            codigo=codigo,
-                            tipo_cartera="MULTAS",
-                            estado_cartera_final=WalletStatus.ACTIVE.value,
-                            fecha=safe_text(row_dict, "FECHA_COMPARENDO"),
-                            tipo_comparendo=safe_text(row_dict, "TIPO_COMPARENDO"),
-                            clase=safe_text(row_dict, "CLASE"),
-                            servicio=safe_text(row_dict, "SERVICIO"),
-                            valor_inicial_cartera=safe_text(row_dict, "CART_VALOR_INICIAL"),
-                            numero_referencia_cartera=safe_text(row_dict, "CART_NRO_REFERENCIA"),
-                            estado_cartera=safe_text(row_dict, "ESTADO_CARTERA"),
-                            fecha_inicio_cartera=safe_text(row_dict, "CART_FECHA_INGRESO"),
-                            estado_gestion=safe_text(row_dict, "ESTADO_GESTION"),
-                            capital=safe_text(row_dict, "CAPITAL"),
-                            total=safe_text(row_dict, "TOTAL")
-                        )
-                        records.append(cartera)
+                    recaudo = Recaudo(
+                        archivo_id=file_id,
+                        organismo=organismo,
+                        tipo_recaudo="DERECHOS DE TRANSITO",
+                        fuente=safe_text(row_dict, "FUENTE"),
+                        fecha_pago=safe_datetime(row_dict, "FECHA_PAGO") or safe_datetime(row_dict, "FECHA PAGO") or safe_datetime(row_dict, "_1"),
+                        recibo=safe_text(row_dict, "RECIBO"),
+                        recibo_pago=safe_text(row_dict, "RECIBO_PAGO"),
+                        valor_recibido=safe_text(row_dict, "VALOR_RECIBO"),
+                        tipo_documento=safe_text(row_dict, "TIPO_DOCUMENTO"),
+                        identificacion=safe_text(row_dict, "IDENTIFICACION"),
+                        nombre=safe_text(row_dict, "NOMBRE"),
+                        vehiculo_placa=safe_text(row_dict, "VEHI_PLACA") or safe_text(row_dict, "PLACA"),
+                        comparendo=safe_text(row_dict, "COMPARENDO") or safe_text(row_dict, "CODIGO"),
+                        fecha_comparendo=safe_datetime(row_dict, "COMP_FECHA") or safe_datetime(row_dict, "FECHA_COMPARENDO"),
+                        año_comparendo=safe_text(row_dict, "AÑO_COMPARENDO"),
+                        prescripcion=safe_text(row_dict, "PRESCRIPCION"),
+                        tipo_comparendo=safe_text(row_dict, "TIPO_COMPARENDO"),
+                        clase_vehiculo=safe_text(row_dict, "CLASE_VEHICULO") or safe_text(row_dict, "CLASE"),
+                        tipo=safe_text(row_dict, "TIPO"),
+                        servicio_vehiculo=safe_text(row_dict, "SERVICIO_VEHICULO") or safe_text(row_dict, "SERVICIO"),
+                        valor_pagado=safe_text(row_dict, "VALOR_PAGADO"),
+                        fecha_distribucion=safe_datetime(row_dict, "DISTRI_FECHA"),
+                        resolucion_mp=safe_text(row_dict, "RESOLUCION_MP"),
+                        valor_inicial_cargado=safe_text(row_dict, "VALOR_INICIAL_CAR") or safe_text(row_dict, "CART_VALOR_INICIAL") or safe_text(row_dict, "CARTERA_VALOR_INICIAL"),
+                        concepto=safe_text(row_dict, "CONCEPTO"),
+                        fecha_cartera=safe_datetime(row_dict, "FECHA_CARTERA") or safe_datetime(row_dict, "FECHA CARTERA"),
+                        estado_cartera=safe_text(row_dict, "ESTADO_CARTERA") or safe_text(row_dict, "ESTADO CARTERA"),
+                        tipo_cartera=safe_text(row_dict, "TIPO_CARTERA") or "DERECHOS DE TRANSITO",
+                        concepto_principal=safe_text(row_dict, "CONCEPTO_PRINCIPAL"),
+                        gestion=safe_text(row_dict, "GESTION") or safe_text(row_dict, "GESTIÓN") or safe_text(row_dict, "ESTADO_GESTION"),
+                        descuento_cartera=safe_text(row_dict, "DESCUENTO_CARTERA"),
+                        descuento_de_intereses=safe_text(row_dict, "DES_INTERESES"),
+                        cantidad_de_descuento_cartera=safe_int(row_dict, "CANT_DESTO_CARTERA"),
+                        cantidad_de_descuento_de_intereses=safe_int(row_dict, "CANT_DES_INTERESES"),
+                        resolucion_sancion=safe_text(row_dict, "RESOLUCIÓN_SANCIÓN") or safe_text(row_dict, "RESOLUCION_SANCION"),
+                        fecha_resolucion_sancion=safe_datetime(row_dict, "FECHA_RESOLUCION_SANCIÓN") or safe_datetime(row_dict, "FECHA_RESOLUCION_SANCION"),
+                        valor_pagado_de_intereses=safe_text(row_dict, "VALOR_PAGADO_INTERESES"),
+                        acuerdos_de_pago=safe_text(row_dict, "ACUERDOS_DE_PAGO"),
+                        referencia=safe_text(row_dict, "REFERENCIA"),
+                        sistematizacion=safe_text(row_dict, "SISTEMATIZACION")
+                    )
+                    records.append(recaudo)
                     
                     total_guardadas += 1
                     
@@ -518,9 +518,6 @@ def get_recaudos_derechos(file_id, file_path, headers, site_id, drive_id):
             # Insertar lote
             if records:
                 batch_insert_records(records, BATCH_SIZE)
-
-            if hay_actualizaciones:
-                session.commit()
         
         logger.info(f"Total guardadas: {total_guardadas}, Total errores: {total_errores}")
         
