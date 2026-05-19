@@ -8,7 +8,7 @@ import uvicorn
 from dotenv import load_dotenv
 from pyngrok import ngrok
 
-from main import app
+from backend.main import app
 
 
 logging.basicConfig(level=logging.INFO)

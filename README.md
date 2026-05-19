@@ -36,6 +36,15 @@ El flujo principal esta dividido en estos componentes:
 6. `graph_subscriptions.py` administra suscripciones de Microsoft Graph para recibir eventos de cambio.
 7. `run_tunnel.py` abre un tunel con ngrok y arranca la API para pruebas o webhooks externos.
 
+## Trazabilidad y visualización del flujo (nueva)
+
+Se agregó un sistema de trazabilidad para registrar y visualizar cada paso del procesamiento de archivos.
+
+- Nuevas tablas en la BD: `file_processing_logs`, `processing_step_executions`.
+- Nuevo módulo backend: `backend/processing_tracker.py` (clase `FileProcessingTracker`) para registrar pasos como `descargando`, `validando`, `procesando`, `guardando`, `finalizando`.
+- Nuevos endpoints para consultar el flujo y detalles de procesamiento (ver "Endpoints importantes").
+- Frontend: visualizador interactivo con React Flow en `frontend/app/welcome/welcome.tsx`.
+
 La aplicacion usa estas carpetas o prefijos para clasificar los archivos en sharepoint:
 
 - `/RECAUDO/MULTAS/`
@@ -171,7 +180,21 @@ Este script crea, renueva o recrea la suscripcion y guarda su estado en `subscri
 - `GET /registrar-documento` ejecuta una sincronizacion manual de SharePoint y persiste los resultados.
 - `POST /webhook` recibe notificaciones de Microsoft Graph.
 
-El webhook tambien responde a la validacion inicial de Microsoft Graph cuando la URL incluye `validationToken`.
+### Endpoints de trazabilidad (nuevos)
+
+- `GET /api/archivos` — Lista archivos procesados. Soporta filtros opcionales:
+	- `estado` (iniciado, procesando, completado, error)
+	- `tipo` (MULTAS, DERECHOS, RECAUDO, CARTERA)
+	- `organismo` (prefijo de ruta)
+	- `skip`, `limit` (paginación)
+
+- `GET /api/archivos/{archivo_id}/flujo` — Retorna detalle del flujo de procesamiento de un archivo:
+	- `procesamiento`: estado general, duracion, filas procesadas/fallidas
+	- `pasos`: lista ordenada de `ProcessingStepExecution` (nombre, orden, estado, duracion, registros procesados, mensajes de error)
+
+- `GET /api/archivos/{archivo_id}/detalles` — Resumen con estadísticas por archivo (conteo de `recaudos`, `carteras`, duración y porcentaje de éxito).
+
+El webhook también responde a la validación inicial de Microsoft Graph cuando la URL incluye `validationToken`.
 
 ## Que guarda en la base de datos
 
@@ -181,6 +204,9 @@ El proyecto crea y usa estas tablas:
 - `recaudos`: filas procesadas desde documentos de recaudo.
 - `carteras`: filas procesadas desde documentos de cartera.
 - `auditoria`: registro auxiliar por columna/archivo.
+
+- `file_processing_logs`: registro principal por cada archivo (estado, duración, filas procesadas/fallidas).
+- `processing_step_executions`: detalle de cada paso ejecutado por archivo (nombre, orden, estado, duración, registros procesados, errores).
 
 ## Detalles tecnicos
 

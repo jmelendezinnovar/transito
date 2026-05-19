@@ -18,7 +18,14 @@ session = None
 Session = None
 
 try:
-    engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+    engine = create_engine(
+        DATABASE_URL,
+        echo=False,
+        pool_pre_ping=True,
+        pool_size=20,           # Aumentado de default 5 (mejor paralelismo)
+        max_overflow=40,        # Aumentado de default 10 (permite 60 conexiones totales)
+        pool_recycle=3600       # Reciclar conexiones cada hora (evita timeout)
+    )
     with engine.connect() as conn:
         logger.info("Conexión a PostgreSQL exitosa")
         
@@ -31,6 +38,8 @@ try:
         archivo_id = Column(String, unique=True, nullable=False)
         nombre = Column(String, nullable=False)
         ruta = Column(String, nullable=False)
+        url = Column(String, nullable=False)
+        rows = Column(Integer, nullable=False)
         created_at = Column(DateTime, default=func.now())
 
     class Recaudo(Base):
@@ -134,6 +143,40 @@ try:
         columna = Column(String, nullable=False)
         created_at = Column(DateTime, default=func.now())
 
+    class FileProcessingLog(Base):
+        """Registro principal del procesamiento de cada archivo"""
+        __tablename__ = "file_processing_logs"
+
+        id = Column(Integer, primary_key=True, autoincrement=True)
+        archivo_id = Column(String, ForeignKey("archivos.archivo_id"), nullable=False, unique=True)
+        status = Column(String, nullable=False, default="iniciado")  # iniciado, procesando, completado, error
+        total_steps = Column(Integer, nullable=False, default=0)
+        completed_steps = Column(Integer, nullable=False, default=0)
+        error_message = Column(String, nullable=True)
+        total_duration_ms = Column(Integer, nullable=True)  # Duración total en ms
+        rows_processed = Column(Integer, nullable=False, default=0)
+        rows_failed = Column(Integer, nullable=False, default=0)
+        started_at = Column(DateTime, default=func.now())
+        completed_at = Column(DateTime, nullable=True)
+        created_at = Column(DateTime, default=func.now())
+
+    class ProcessingStepExecution(Base):
+        """Registro de cada paso ejecutado en el procesamiento de un archivo"""
+        __tablename__ = "processing_step_executions"
+
+        id = Column(Integer, primary_key=True, autoincrement=True)
+        file_processing_log_id = Column(Integer, ForeignKey("file_processing_logs.id"), nullable=False)
+        step_name = Column(String, nullable=False)  # descargar, validar, procesar, guardar, etc.
+        step_order = Column(Integer, nullable=False)  # Orden de ejecución
+        status = Column(String, nullable=False)  # pendiente, ejecutando, completado, error
+        duration_ms = Column(Integer, nullable=True)  # Duración del paso
+        details = Column(String, nullable=True)  # Detalles específicos del paso
+        error_message = Column(String, nullable=True)  # Mensaje de error si falló
+        records_processed = Column(Integer, nullable=False, default=0)
+        started_at = Column(DateTime, nullable=True)
+        completed_at = Column(DateTime, nullable=True)
+        created_at = Column(DateTime, default=func.now())
+
     Base.metadata.create_all(engine)
 
     def _sync_serial_sequence(table_name: str):
@@ -149,7 +192,7 @@ try:
                     text(f"SELECT setval(pg_get_serial_sequence('{table_name}', 'id'), 1, false)")
                 )
 
-    for table_name in ("archivos", "recaudos", "carteras", "auditoria"):
+    for table_name in ("archivos", "recaudos", "carteras", "auditoria", "file_processing_logs", "processing_step_executions"):
         try:
             _sync_serial_sequence(table_name)
         except Exception as sequence_error:
