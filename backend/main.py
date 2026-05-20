@@ -16,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.sharepoint import get_sharepoint_files, save_files_to_database
+from backend.sharepoint_sucio import get_datos_sucios_files, save_datos_sucios_to_database
 from backend.models import Session, Archivo, Ejecucion, Etapa
 
 logging.basicConfig(level=logging.INFO)
@@ -104,6 +105,66 @@ def procesar_sincronizacion_sharepoint():
         logger.info(f"Webhook: proceso completado. {total_procesados} archivos procesados")
     except Exception as e:
         logger.error(f"Error procesando sincronización en background: {str(e)}")
+
+
+@app.get("/datos-sucios")
+async def registrar_datos_sucios():
+    try:
+        data = get_datos_sucios_files()
+        excel_files = data["files"]
+        headers = data["headers"]
+        site_id = data["site_id"]
+        drive_id = data["drive_id"]
+
+        if not excel_files:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "estado": "exitoso",
+                    "mensaje": "No se encontraron archivos en DATOS SUCIOS",
+                    "total_encontrados": 0,
+                    "guardados": [],
+                    "actualizados": [],
+                    "procesados": [],
+                    "errores": []
+                }
+            )
+
+        results = save_datos_sucios_to_database(excel_files, headers, site_id, drive_id)
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "estado": "exitoso",
+                "mensaje": f"Proceso completado. {len(results['guardados']) + len(results['actualizados'])} archivos procesados",
+                "total_encontrados": len(excel_files),
+                "guardados": {
+                    "cantidad": len(results["guardados"]),
+                    "archivos": results["guardados"]
+                },
+                "actualizados": {
+                    "cantidad": len(results["actualizados"]),
+                    "archivos": results["actualizados"]
+                },
+                "procesados": {
+                    "cantidad": len(results["procesados"]),
+                    "detalles": results["procesados"]
+                },
+                "errores": {
+                    "cantidad": len(results["errores"]),
+                    "detalles": results["errores"]
+                }
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error procesando datos sucios: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "estado": "error",
+                "mensaje": f"Error al procesar datos sucios: {str(e)}"
+            }
+        )
 
 @app.post("/webhook")
 async def webhook(request: Request, background_tasks: BackgroundTasks):
@@ -195,6 +256,7 @@ async def root():
         "version": "1.0.0",
         "endpoints": {
             "registrar": "/registrar-documento - POST para buscar y registrar archivos",
+            "datos_sucios": "/datos-sucios - GET para registrar archivos de la carpeta DATOS SUCIOS",
             "health": "/health - GET para verificar estado de la API",
             "docs": "/docs - Documentación interactiva (Swagger)"
         }
