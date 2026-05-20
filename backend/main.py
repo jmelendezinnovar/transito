@@ -16,7 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.sharepoint import get_sharepoint_files, save_files_to_database
-from backend.models import Session, Archivo, FileProcessingLog, ProcessingStepExecution
+from backend.models import Session, Archivo, Ejecucion, Etapa
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -60,6 +60,17 @@ def _build_allowed_origins() -> List[str]:
                 origins.add(cleaned)
 
     return sorted(origins)
+
+
+def _execution_defaults() -> dict:
+    return {
+        "estado": "sin_ejecucion",
+        "iniciado": None,
+        "finalizado": None,
+        "etapas_total": 0,
+        "etapas_completadas": 0,
+        "etapas_fallidas": 0,
+    }
 
 app = FastAPI(
     title="API de Registro de Documentos",
@@ -202,57 +213,48 @@ async def listar_archivos(
     try:
         db_session = Session()
         
-        query = db_session.query(
-            Archivo.id,
-            Archivo.archivo_id,
-            Archivo.nombre,
-            Archivo.ruta,
-            Archivo.url,
-            Archivo.rows,
-            Archivo.created_at,
-            FileProcessingLog.status,
-            FileProcessingLog.completed_steps,
-            FileProcessingLog.total_steps,
-            FileProcessingLog.error_message,
-            FileProcessingLog.total_duration_ms,
-            FileProcessingLog.rows_processed,
-            FileProcessingLog.rows_failed
-        ).outerjoin(
-            FileProcessingLog,
-            Archivo.archivo_id == FileProcessingLog.archivo_id
+        query = db_session.query(Archivo, Ejecucion).outerjoin(
+            Ejecucion,
+            Archivo.archivo_id == Ejecucion.archivo_id
         )
-        
-        if estado:
-            query = query.filter(FileProcessingLog.status == estado)
-        
+
         if tipo:
             query = query.filter(Archivo.ruta.like(f"%{tipo}%"))
-        
+
         if organismo:
             query = query.filter(Archivo.ruta.like(f"{organismo}%"))
-        
+
+        if estado:
+            query = query.filter(Ejecucion.estado == estado)
+
         query = query.order_by(Archivo.created_at.desc())
-        
+
         total = query.count()
         archivos = query.offset(skip).limit(limit).all()
-        
+
         resultado = []
-        for archivo in archivos:
+        for archivo, ejecucion in archivos:
+            ejecucion_data = _execution_defaults()
+            if ejecucion:
+                etapas = db_session.query(Etapa).filter(Etapa.ejecucion_id == ejecucion.id).all()
+                ejecucion_data = {
+                    "estado": ejecucion.estado,
+                    "iniciado": ejecucion.iniciado.isoformat() if ejecucion.iniciado else None,
+                    "finalizado": ejecucion.finalizado.isoformat() if ejecucion.finalizado else None,
+                    "etapas_total": len(etapas),
+                    "etapas_completadas": sum(1 for etapa in etapas if etapa.estado == "Completado"),
+                    "etapas_fallidas": sum(1 for etapa in etapas if etapa.estado == "Fallido"),
+                }
+
             resultado.append({
-                "id": archivo[0],
-                "archivo_id": archivo[1],
-                "nombre": archivo[2],
-                "ruta": archivo[3],
-                "url": archivo[4],
-                "rows": archivo[5],
-                "fecha_creacion": archivo[6].isoformat() if archivo[6] else None,
-                "status": archivo[7] or "sin_procesar",
-                "pasos_completados": archivo[8] or 0,
-                "total_pasos": archivo[9] or 0,
-                "error_message": archivo[10],
-                "duracion_ms": archivo[11],
-                "filas_procesadas": archivo[12] or 0,
-                "filas_fallidas": archivo[13] or 0
+                "id": archivo.id,
+                "archivo_id": archivo.archivo_id,
+                "nombre": archivo.nombre,
+                "ruta": archivo.ruta,
+                "url": archivo.url,
+                "filas": archivo.filas,
+                "fecha_creacion": archivo.created_at.isoformat() if archivo.created_at else None,
+                "ejecucion": ejecucion_data
             })
         
         db_session.close()
@@ -286,33 +288,29 @@ async def obtener_flujo_archivo(archivo_id: str):
             db_session.close()
             raise HTTPException(status_code=404, detail="Archivo no encontrado")
         
-        # Obtener log de procesamiento
-        log = db_session.query(FileProcessingLog).filter(
-            FileProcessingLog.archivo_id == archivo_id
-        ).first()
-        
+        ejecucion = db_session.query(Ejecucion).filter(Ejecucion.archivo_id == archivo_id).first()
         pasos = []
-        if log:
-            # Obtener todos los pasos ejecutados
-            step_executions = db_session.query(ProcessingStepExecution).filter(
-                ProcessingStepExecution.file_processing_log_id == log.id
-            ).order_by(ProcessingStepExecution.step_order).all()
-            
+        ejecucion_data = _execution_defaults()
+        if ejecucion:
+            pasos_db = db_session.query(Etapa).filter(Etapa.ejecucion_id == ejecucion.id).order_by(Etapa.id).all()
             pasos = [
                 {
-                    "id": step.id,
-                    "nombre": step.step_name,
-                    "orden": step.step_order,
-                    "status": step.status,
-                    "duracion_ms": step.duration_ms,
-                    "detalles": step.details,
-                    "mensaje_error": step.error_message,
-                    "registros_procesados": step.records_processed,
-                    "inicio": step.started_at.isoformat() if step.started_at else None,
-                    "fin": step.completed_at.isoformat() if step.completed_at else None
+                    "id": etapa.id,
+                    "nombre": etapa.nombre,
+                    "estado": etapa.estado,
+                    "inicio": etapa.iniciado.isoformat() if etapa.iniciado else None,
+                    "fin": etapa.finalizado.isoformat() if etapa.finalizado else None
                 }
-                for step in step_executions
+                for etapa in pasos_db
             ]
+            ejecucion_data = {
+                "estado": ejecucion.estado,
+                "iniciado": ejecucion.iniciado.isoformat() if ejecucion.iniciado else None,
+                "finalizado": ejecucion.finalizado.isoformat() if ejecucion.finalizado else None,
+                "etapas_total": len(pasos_db),
+                "etapas_completadas": sum(1 for etapa in pasos_db if etapa.estado == "Completado"),
+                "etapas_fallidas": sum(1 for etapa in pasos_db if etapa.estado == "Fallido"),
+            }
         
         resultado = {
             "archivo": {
@@ -321,20 +319,10 @@ async def obtener_flujo_archivo(archivo_id: str):
                 "nombre": archivo.nombre,
                 "ruta": archivo.ruta,
                 "url": archivo.url,
-                "rows": archivo.rows,
+                "filas": archivo.filas,
                 "fecha_creacion": archivo.created_at.isoformat() if archivo.created_at else None
             },
-            "procesamiento": {
-                "status": log.status if log else "sin_procesar",
-                "total_pasos": log.total_steps if log else 0,
-                "pasos_completados": log.completed_steps if log else 0,
-                "mensaje_error": log.error_message if log else None,
-                "duracion_total_ms": log.total_duration_ms if log else None,
-                "filas_procesadas": log.rows_processed if log else 0,
-                "filas_fallidas": log.rows_failed if log else 0,
-                "inicio": log.started_at.isoformat() if log and log.started_at else None,
-                "fin": log.completed_at.isoformat() if log and log.completed_at else None
-            },
+            "procesamiento": ejecucion_data,
             "pasos": pasos
         }
         
@@ -360,10 +348,21 @@ async def obtener_detalles_archivo(archivo_id: str):
         if not archivo:
             db_session.close()
             raise HTTPException(status_code=404, detail="Archivo no encontrado")
-        
-        log = db_session.query(FileProcessingLog).filter(
-            FileProcessingLog.archivo_id == archivo_id
-        ).first()
+
+        ejecucion = db_session.query(Ejecucion).filter(Ejecucion.archivo_id == archivo_id).first()
+        etapas = []
+        if ejecucion:
+            etapas_db = db_session.query(Etapa).filter(Etapa.ejecucion_id == ejecucion.id).all()
+            etapas = [
+                {
+                    "id": etapa.id,
+                    "nombre": etapa.nombre,
+                    "estado": etapa.estado,
+                    "inicio": etapa.iniciado.isoformat() if etapa.iniciado else None,
+                    "fin": etapa.finalizado.isoformat() if etapa.finalizado else None
+                }
+                for etapa in etapas_db
+            ]
         
         # Contar registros por tabla relacionada
         from backend.models import Recaudo, Cartera
@@ -381,21 +380,25 @@ async def obtener_detalles_archivo(archivo_id: str):
                     "nombre": archivo.nombre,
                     "ruta": archivo.ruta,
                     "url": archivo.url,
-                    "rows": archivo.rows,
+                    "filas": archivo.filas,
                     "fecha_creacion": archivo.created_at.isoformat() if archivo.created_at else None
                 },
                 "procesamiento": {
-                    "status": log.status if log else "sin_procesar",
-                    "duracion_total_ms": log.total_duration_ms if log else None,
-                    "filas_procesadas": log.rows_processed if log else 0,
-                    "filas_fallidas": log.rows_failed if log else 0,
-                    "porcentaje_exito": round((log.rows_processed / (log.rows_processed + log.rows_failed) * 100), 2) if log and (log.rows_processed + log.rows_failed) > 0 else 0
+                    **(_execution_defaults() if not ejecucion else {
+                        "estado": ejecucion.estado,
+                        "iniciado": ejecucion.iniciado.isoformat() if ejecucion.iniciado else None,
+                        "finalizado": ejecucion.finalizado.isoformat() if ejecucion.finalizado else None,
+                        "etapas_total": len(etapas),
+                        "etapas_completadas": sum(1 for etapa in etapas if etapa["estado"] == "Completado"),
+                        "etapas_fallidas": sum(1 for etapa in etapas if etapa["estado"] == "Fallido"),
+                    })
                 },
                 "estadisticas": {
                     "recaudos_registrados": recaudos_count,
                     "carteras_registradas": carteras_count,
                     "total_registros_guardados": recaudos_count + carteras_count
-                }
+                },
+                "etapas": etapas
             }
         )
     except HTTPException:

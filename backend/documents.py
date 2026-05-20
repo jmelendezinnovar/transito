@@ -9,3 +9,22 @@ class Document(Enum):
 class WalletStatus(Enum):
     ACTIVE = "ACTIVO"
     INACTIVE = "INACTIVO"
+
+class EjecucionEstado(Enum):
+    NO_INICIADA = "No iniciada"
+    PENDIENTE = "Pendiente"
+    EN_PROCESO = "Procesando"
+    COMPLETADA = "Completado"
+    FALLIDA = "Fallido"
+
+class EtapaEstado(Enum):
+    NO_INICIADO = "No iniciado"
+    PENDIENTE = "Pendiente"
+    EN_PROCESO = "Procesando"
+    COMPLETADO = "Completado"
+    FALLIDO = "Fallido"
+
+class EtapaNombre(Enum):
+    EXTRACCION = "Extrayendo"
+    LIMPIEZA = "Limpiando"
+    GUARDADO = "Guardando"

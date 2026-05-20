@@ -6,6 +6,8 @@ import ReactFlow, {
 	Background,
 	useNodesState,
 	useEdgesState,
+	Handle,
+	Position,
 } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
 import 'reactflow/dist/style.css';
@@ -18,10 +20,17 @@ import {
 	SelectValue,
 } from '~/components/ui/select';
 import ExcelNode from '~/components/flow/excel';
+import { EtapaNombre } from '~/config/enum';
+import ExtraccionNode from '~/components/flow/extraccion';
+import { formatTime } from '~/lib/utils';
+import LimpiezaNode from '~/components/flow/limpieza';
+import GuardadoNode from '~/components/flow/guardado';
 
 interface FileInfo {
 	archivo_id: string;
 	nombre: string;
+	filas: number;
+	fecha_creacion?: string | null;
 	url?: string;
 }
 
@@ -29,13 +38,14 @@ interface ProcessingStep {
 	id: number;
 	nombre: string;
 	orden: number;
+	filas: number;
 	status: string;
 	duracion_ms: number | null;
 	detalles: string | null;
 	mensaje_error: string | null;
 	registros_procesados: number;
-	inicio: string | null;
-	fin: string | null;
+	inicio: string;
+	fin: string;
 }
 
 interface FlowData {
@@ -43,45 +53,6 @@ interface FlowData {
 		url?: string;
 	};
 	pasos: ProcessingStep[];
-}
-
-function nodeStyleByStatus(status: string): React.CSSProperties {
-	if (status === 'completado') {
-		return {
-			background: '#ecfdf3',
-			border: '2px solid #16a34a',
-			color: '#14532d',
-			borderRadius: 12,
-			padding: 8,
-			fontWeight: 600,
-			minWidth: 180,
-			textAlign: 'center',
-		};
-	}
-
-	if (status === 'error') {
-		return {
-			background: '#fef2f2',
-			border: '2px solid #dc2626',
-			color: '#7f1d1d',
-			borderRadius: 12,
-			padding: 8,
-			fontWeight: 600,
-			minWidth: 180,
-			textAlign: 'center',
-		};
-	}
-
-	return {
-		background: '#eff6ff',
-		border: '2px solid #2563eb',
-		color: '#1e3a8a',
-		borderRadius: 12,
-		padding: 8,
-		fontWeight: 600,
-		minWidth: 180,
-		textAlign: 'center',
-	};
 }
 
 export function Welcome() {
@@ -107,10 +78,15 @@ export function Welcome() {
 
 			if (response.ok) {
 				const data = await response.json();
-				const listado: FileInfo[] = data.archivos || [];
+				const listadoRaw = (data.archivos || []) as any[];
+				const listado: FileInfo[] = listadoRaw.map((a) => ({
+					archivo_id: a.archivo_id,
+					nombre: a.nombre,
+					filas: Number(a.filas) || 0,
+					url: a.url || a.webUrl || null,
+					fecha_creacion: a.fecha_creacion || null,
+				}));
 				setArchivos(listado);
-
-				console.log(listado);
 
 				if (!selectedFileId && listado.length > 0) {
 					setSelectedFileId(listado[0].archivo_id);
@@ -144,7 +120,31 @@ export function Welcome() {
 				});
 
 				if (response.ok) {
-					const data: FlowData = await response.json();
+					const dataRaw = await response.json();
+					const data: FlowData = {
+						archivo: dataRaw.archivo || null,
+						pasos: (dataRaw.pasos || []).map((p: any) => {
+							const rawStatus = (p.estado || p.status || '').toString().toLowerCase();
+							let statusNorm = 'pendiente';
+							if (rawStatus.includes('proces')) statusNorm = 'procesando';
+							else if (rawStatus.includes('complet')) statusNorm = 'completado';
+							else if (rawStatus.includes('fall') || rawStatus.includes('error')) statusNorm = 'error';
+
+							return {
+								id: p.id,
+								nombre: p.nombre,
+								orden: p.orden,
+								filas: Number(p.filas) || 0,
+								status: statusNorm,
+								duracion_ms: p.duracion_ms ?? null,
+								detalles: p.detalles ?? null,
+								mensaje_error: p.mensaje_error ?? null,
+								registros_procesados: p.registros_procesados ?? 0,
+								inicio: p.inicio ?? null,
+								fin: p.fin ?? null,
+							};
+						}),
+					};
 					const newNodes: Node[] = [];
 					const newEdges: Edge[] = [];
 					const excelUrl = data.archivo?.url ?? archivoSeleccionado?.url;
@@ -156,11 +156,12 @@ export function Welcome() {
 								<ExcelNode
 									nombre={archivoSeleccionado?.nombre ?? 'Archivo cargado'}
 									url={excelUrl}
-									filas={1000}
+									filas={archivoSeleccionado?.filas ?? 0}
 								/>
 							),
 						},
 						position: { x: 0, y: 160 },
+						sourcePosition: Position.Right,
 						style: {
 							background: '#ffffff',
 							border: '1px solid #cbd5e1',
@@ -177,10 +178,46 @@ export function Welcome() {
 						newNodes.push({
 							id: pasoNodeId,
 							data: {
-								label: paso.nombre.charAt(0).toUpperCase() + paso.nombre.slice(1),
+								label: (
+									paso.nombre == EtapaNombre.EXTRACCION ? (
+										<ExtraccionNode 
+											nombre={paso.nombre}
+											filas={paso.filas}
+											tiempo={formatTime(paso.inicio ?? '', paso.fin ?? '')}
+										/>
+									) : (paso.nombre === EtapaNombre.LIMPIEZA ? (
+											<LimpiezaNode
+												nombre={paso.nombre}
+												filas={paso.filas}
+												tiempo={formatTime(paso.inicio ?? '', paso.fin ?? '')}
+											/>
+										) : ( paso.nombre === EtapaNombre.GUARDADO ? (
+												<GuardadoNode 
+													nombre={paso.nombre}
+													filas={paso.filas}
+													tiempo={formatTime(paso.inicio ?? '', paso.fin ?? '')}
+											/>
+										)
+											: (
+												<>
+													<Handle type="target" position={Position.Left} />
+													<span>{paso.nombre.charAt(0).toUpperCase() + paso.nombre.slice(1)}</span>
+													<Handle type="source" position={Position.Right} />
+												</>
+											)
+										)
+									)	
+								),
 							},
 							position: { x: 240 * (index + 1), y: 160 },
-							style: nodeStyleByStatus(paso.status),
+							style: {
+								background: '#ffffff',
+								border: '1px solid #cbd5e1',
+								borderRadius: 14,
+								padding: 0,
+								width: 200,
+								boxShadow: '0 10px 25px rgba(15, 23, 42, 0.08)',
+							},
 						});
 
 						if (index === 0) {
@@ -189,6 +226,7 @@ export function Welcome() {
 								source: 'inicio',
 								target: pasoNodeId,
 								animated: paso.status === 'procesando',
+								type: 'straight',
 							});
 						} else {
 							const prevPaso = data.pasos[index - 1];
@@ -197,38 +235,11 @@ export function Welcome() {
 								source: `paso-${prevPaso.id}`,
 								target: pasoNodeId,
 								animated: paso.status === 'procesando',
+								type: 'straight',
 							});
 						}
 					});
-
-					const finX = 240 * (data.pasos.length + 1);
-					const finStatus = data.pasos.some((paso) => paso.status === 'error')
-						? 'error'
-						: 'completado';
-
-					newNodes.push({
-						id: 'fin',
-						data: { label: 'Fin' },
-						position: { x: finX, y: 160 },
-						style: nodeStyleByStatus(finStatus),
-					});
-
-					if (data.pasos.length > 0) {
-						const lastPaso = data.pasos[data.pasos.length - 1];
-						newEdges.push({
-							id: `edge-${lastPaso.id}-fin`,
-							source: `paso-${lastPaso.id}`,
-							target: 'fin',
-							animated: lastPaso.status === 'procesando',
-						});
-					} else {
-						newEdges.push({
-							id: 'edge-inicio-fin',
-							source: 'inicio',
-							target: 'fin',
-						});
-					}
-
+					
 					setNodes(newNodes);
 					setEdges(newEdges);
 				} else {
@@ -256,9 +267,9 @@ export function Welcome() {
 
 	return (
 		<div className="w-screen h-screen grid grid-cols-1 grid-rows-1 overflow-hidden relative bg-white">
-			<header className="fixed top-[16px] left-[16px] z-10 mx-auto flex items-center gap-4">
+			<header className="fixed top-4 left-4 z-10 mx-auto flex items-center gap-4">
 				<Select value={selectedFileId} onValueChange={setSelectedFileId}>
-					<SelectTrigger className="min-w-[360px]">
+					<SelectTrigger className="min-w-90">
 						<SelectValue placeholder="Selecciona un archivo" />
 					</SelectTrigger>
 					<SelectContent>

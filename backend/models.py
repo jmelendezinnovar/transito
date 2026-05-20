@@ -1,6 +1,6 @@
 import os
 from sqlalchemy import ForeignKey, create_engine, Column, String, DateTime, Integer, func, text
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from datetime import datetime
 import logging
 from dotenv import load_dotenv
@@ -39,8 +39,9 @@ try:
         nombre = Column(String, nullable=False)
         ruta = Column(String, nullable=False)
         url = Column(String, nullable=False)
-        rows = Column(Integer, nullable=False)
+        filas = Column("rows", Integer, nullable=False)
         created_at = Column(DateTime, default=func.now())
+        ejecucion = relationship("Ejecucion", back_populates="archivo", uselist=False, cascade="all, delete-orphan")
 
     class Recaudo(Base):
         __tablename__ = "recaudos"
@@ -143,39 +144,27 @@ try:
         columna = Column(String, nullable=False)
         created_at = Column(DateTime, default=func.now())
 
-    class FileProcessingLog(Base):
-        """Registro principal del procesamiento de cada archivo"""
-        __tablename__ = "file_processing_logs"
+    class Ejecucion(Base):
+        __tablename__ = "ejecuciones"
 
         id = Column(Integer, primary_key=True, autoincrement=True)
-        archivo_id = Column(String, ForeignKey("archivos.archivo_id"), nullable=False, unique=True)
-        status = Column(String, nullable=False, default="iniciado")  # iniciado, procesando, completado, error
-        total_steps = Column(Integer, nullable=False, default=0)
-        completed_steps = Column(Integer, nullable=False, default=0)
-        error_message = Column(String, nullable=True)
-        total_duration_ms = Column(Integer, nullable=True)  # Duración total en ms
-        rows_processed = Column(Integer, nullable=False, default=0)
-        rows_failed = Column(Integer, nullable=False, default=0)
-        started_at = Column(DateTime, default=func.now())
-        completed_at = Column(DateTime, nullable=True)
-        created_at = Column(DateTime, default=func.now())
-
-    class ProcessingStepExecution(Base):
-        """Registro de cada paso ejecutado en el procesamiento de un archivo"""
-        __tablename__ = "processing_step_executions"
+        archivo_id = Column(String, ForeignKey("archivos.archivo_id"), nullable=False, unique=True, index=True)
+        estado = Column(String, nullable=False)
+        iniciado = Column(DateTime, default=func.now())
+        finalizado = Column(DateTime, nullable=True)
+        archivo = relationship("Archivo", back_populates="ejecucion")
+        etapas = relationship("Etapa", back_populates="ejecucion", cascade="all, delete-orphan", order_by="Etapa.id")
+        
+    class Etapa(Base):
+        __tablename__ = "etapas"
 
         id = Column(Integer, primary_key=True, autoincrement=True)
-        file_processing_log_id = Column(Integer, ForeignKey("file_processing_logs.id"), nullable=False)
-        step_name = Column(String, nullable=False)  # descargar, validar, procesar, guardar, etc.
-        step_order = Column(Integer, nullable=False)  # Orden de ejecución
-        status = Column(String, nullable=False)  # pendiente, ejecutando, completado, error
-        duration_ms = Column(Integer, nullable=True)  # Duración del paso
-        details = Column(String, nullable=True)  # Detalles específicos del paso
-        error_message = Column(String, nullable=True)  # Mensaje de error si falló
-        records_processed = Column(Integer, nullable=False, default=0)
-        started_at = Column(DateTime, nullable=True)
-        completed_at = Column(DateTime, nullable=True)
-        created_at = Column(DateTime, default=func.now())
+        ejecucion_id = Column(Integer, ForeignKey("ejecuciones.id"), nullable=False)
+        nombre = Column(String, nullable=False)
+        estado = Column(String, nullable=False)
+        iniciado = Column(DateTime, default=func.now())
+        finalizado = Column(DateTime, nullable=True)
+        ejecucion = relationship("Ejecucion", back_populates="etapas")
 
     Base.metadata.create_all(engine)
 
@@ -192,7 +181,7 @@ try:
                     text(f"SELECT setval(pg_get_serial_sequence('{table_name}', 'id'), 1, false)")
                 )
 
-    for table_name in ("archivos", "recaudos", "carteras", "auditoria", "file_processing_logs", "processing_step_executions"):
+    for table_name in ("archivos", "recaudos", "carteras", "auditoria", "ejecuciones", "etapas"):
         try:
             _sync_serial_sequence(table_name)
         except Exception as sequence_error:

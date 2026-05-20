@@ -5,11 +5,12 @@ from urllib3.util.retry import Retry
 import os
 import tempfile
 from dotenv import load_dotenv
-from backend.models import Archivo, Recaudo, Cartera, Auditoria, session, Session
-from backend.documents import Document, WalletStatus
+from datetime import datetime
+from backend.models import Archivo, Recaudo, Cartera, Ejecucion, Etapa, session, Session
+from backend.documents import Document, WalletStatus, EjecucionEstado, EtapaEstado, EtapaNombre
+from backend.utils import extract_organismo, safe_text, safe_datetime, safe_int
 import pandas as pd
 import logging
-from io import BytesIO
 from typing import List, Dict
 from multiprocessing import Pool, cpu_count
 import time
@@ -25,66 +26,71 @@ CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 TENANT_ID = os.getenv("TENANT_ID")
 DOMINIO = os.getenv("DOMINIO")
 NOMBRE_SITIO = os.getenv("NOMBRE_SITIO")
-
-# CONFIGURACIÓN DE OPTIMIZACIÓN - AUMENTADO PARA MEJOR PERFORMANCE
-BATCH_SIZE = 100000  # Insertar de a 100k filas por commit (2x más rápido)
-CHUNK_SIZE = 100000  # Leer 100k filas a la vez de Excel
-MAX_RECURSION_DEPTH = 20  # Límite de profundidad en búsqueda de carpetas
-NUM_WORKERS = min(6, max(2, cpu_count() - 1))  # Usar 2-6 workers según CPU disponible
-# Intervalo de logging de progreso (filas). Puede ajustarse con la variable de entorno `PROGRESS_LOG_EVERY`.
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", "100000"))
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "100000"))
+MAX_RECURSION_DEPTH = int(os.getenv("MAX_RECURSION_DEPTH", "20"))
+NUM_WORKERS = min(6, max(2, cpu_count() - 1))
 PROGRESS_LOG_EVERY = int(os.getenv("PROGRESS_LOG_EVERY", "1000"))
-
 AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
 SCOPE = ["https://graph.microsoft.com/.default"]
 
-def extract_organismo(file_path):
-    """
-        Extrae el organismo del filepath basado en el prefijo 
-        definido en variables de entorno.
-    """
-    try:
-        if "/" in file_path:
-            organismo = file_path.split("/")[0].strip()
-            return organismo if organismo else None
-        
-        return None
-    except Exception as e:
-        logger.error(f"Error extrayendo organismo de {file_path}: {str(e)}")
-        return None
+def build_sharepoint_view_url(web_url: str | None, archivo_id: str) -> str:
+    base_url = (web_url or "").split("?")[0].rstrip("/")
+    if not base_url:
+        base_url = f"https://{DOMINIO}/:x:/s/{NOMBRE_SITIO}"
 
-def safe_text(row_dict, key, default=None):
-    value = row_dict.get(key, default)
-    if value is None or pd.isna(value):
-        return default
+    return f"{base_url}/{archivo_id}"
 
-    text = str(value).strip()
-    if not text or text.lower() == "nan":
-        return default
+def get_or_create_ejecucion(archivo_id: str, estado: str) -> Ejecucion:
+    ejecucion = session.query(Ejecucion).filter_by(archivo_id=archivo_id).first()
+    if ejecucion:
+        ejecucion.estado = estado
+        if estado == EjecucionEstado.EN_PROCESO.value and ejecucion.finalizado is not None:
+            ejecucion.finalizado = None
+        session.commit()
+        return ejecucion
 
-    return text
+    ejecucion = Ejecucion(archivo_id=archivo_id, estado=estado)
+    session.add(ejecucion)
+    session.commit()
+    return ejecucion
 
-def safe_datetime(row_dict, key):
-    value = row_dict.get(key)
-    if value is None or pd.isna(value):
-        return None
+def start_etapa(ejecucion: Ejecucion, nombre: EtapaNombre) -> Etapa:
+    etapa = session.query(Etapa).filter_by(ejecucion_id=ejecucion.id, nombre=nombre.value).first()
+    if etapa:
+        etapa.estado = EtapaEstado.EN_PROCESO.value
+        etapa.iniciado = datetime.now()
+        etapa.finalizado = None
+    else:
+        etapa = Etapa(
+            ejecucion_id=ejecucion.id,
+            nombre=nombre.value,
+            estado=EtapaEstado.EN_PROCESO.value,
+            iniciado=datetime.now()
+        )
+        session.add(etapa)
+    session.commit()
+    return etapa
 
-    parsed = pd.to_datetime(value, errors="coerce")
-    return None if pd.isna(parsed) else parsed
+def complete_etapa(etapa: Etapa):
+    etapa.estado = EtapaEstado.COMPLETADO.value
+    etapa.finalizado = datetime.now()
+    session.commit()
 
-def safe_int(row_dict, key):
-    value = row_dict.get(key)
-    if value is None or pd.isna(value):
-        return None
+def fail_etapa(etapa: Etapa, error_state: str = EtapaEstado.FALLIDO.value):
+    etapa.estado = error_state
+    etapa.finalizado = datetime.now()
+    session.commit()
 
-    if isinstance(value, str):
-        value = value.strip()
-        if not value or value.lower() == "nan":
-            return None
+def complete_ejecucion(ejecucion: Ejecucion):
+    ejecucion.estado = EjecucionEstado.COMPLETADA.value
+    ejecucion.finalizado = datetime.now()
+    session.commit()
 
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return None
+def fail_ejecucion(ejecucion: Ejecucion):
+    ejecucion.estado = EjecucionEstado.FALLIDA.value
+    ejecucion.finalizado = datetime.now()
+    session.commit()
 
 def marcar_carteras_inactivas(organismo: str, tipo_cartera: str):
     """Marca como inactivas todas las carteras del mismo organismo y tipo antes de reimportar."""
@@ -102,7 +108,6 @@ def marcar_carteras_inactivas(organismo: str, tipo_cartera: str):
         logger.error(f"Error marcando carteras inactivas para {organismo}/{tipo_cartera}: {str(e)}")
 
 def get_access_token():
-    """Obtiene token de acceso de Microsoft"""
     app = msal.ConfidentialClientApplication(
         CLIENT_ID, authority=AUTHORITY, client_credential=CLIENT_SECRET
     )
@@ -173,7 +178,6 @@ def download_with_retries(url: str, dest_path: str, headers: Dict = None, timeou
     session.mount("http://", adapter)
 
     hdrs = headers or {}
-    # Evitar compresión para escritura por chunks confiable
     hdrs.setdefault("Accept-Encoding", "identity")
     hdrs.setdefault("Connection", "keep-alive")
 
@@ -219,12 +223,14 @@ def search_excel_files(drive_id, item_id, headers, site_id, path="", depth=0):
                     # Extraer createdDateTime y downloadUrl
                     created_datetime = item.get("createdDateTime")
                     download_url = item.get("@microsoft.graph.downloadUrl", "")
+                    web_url = item.get("webUrl", "")
                     excel_files.append({
                         "file_id": item_id_val,
                         "file_name": item["name"],
                         "file_path": current_path,
                         "createdDateTime": created_datetime,
-                        "downloadUrl": download_url
+                        "downloadUrl": download_url,
+                        "webUrl": web_url
                     })
                 elif "folder" in item:
                     subfolder_files = search_excel_files(drive_id, item_id_val, headers, site_id, current_path, depth + 1)
@@ -282,8 +288,9 @@ def batch_insert_records(records: List, batch_size: int = BATCH_SIZE):
     logger.info(f"Total insertados: {total_inserted:,} registros en {elapsed:.2f}s ({total_inserted/elapsed:,.0f} filas/seg)")
 
 def descargar_y_parsear_excel(file_id: str, file_path: str, headers: Dict, drive_id: str) -> Dict:
-    """Descarga y parsea archivo Excel/CSV desde SharePoint"""
     try:
+        # Generar URL de descarga con token fresco (no caduca como downloadUrl)
+        # Esta URL usa Graph API que siempre funciona con token válido
         download_url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{file_id}/content"
         start_time = time.time()
 
@@ -399,42 +406,48 @@ def save_files_to_database(excel_files, headers, site_id, drive_id):
     archivos_recaudo = []
     
     for file_info in excel_files:
+        ejecucion = None
+        etapa_extraccion = None
+        etapa_limpieza = None
+        etapa_guardado = None
         try:
-            # Descargar archivo para obtener número de filas
-            file_download_url = file_info.get("downloadUrl", "")
-            rows_count = 0
+            # PASO 1: Crear/actualizar Archivo PRIMERO (antes de crear Ejecucion)
+            # Esto previene violaciones de foreign key
+            # Generar URL de descarga con file_id y drive_id (NO uses downloadUrl que expira)
+            file_download_url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{file_info['file_id']}/content"
+            filas_count = 0
+            file_view_url = build_sharepoint_view_url(file_info.get("webUrl"), file_info["file_id"])
             
-            if file_download_url:
-                try:
-                    # Descargar en streaming a temp file y contar filas
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_info["file_path"])[1]) as tmpf:
-                        tmp_path = tmpf.name
+            try:
+                # Descargar en streaming a temp file y contar filas
+                with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_info["file_path"])[1]) as tmpf:
+                    tmp_path = tmpf.name
 
+                try:
+                    download_with_retries(file_download_url, tmp_path, headers=headers, timeout=(10, 900))
+                    if file_info["file_path"].lower().endswith(".xlsx"):
+                        df = pd.read_excel(tmp_path)
+                    elif file_info["file_path"].lower().endswith(".csv"):
+                        df = pd.read_csv(tmp_path)
+                    else:
+                        df = None
+                    filas_count = contar_filas_archivo(file_info["file_path"], df)
+                finally:
                     try:
-                        download_with_retries(file_download_url, tmp_path, headers=headers, timeout=(10, 900))
-                        if file_info["file_path"].lower().endswith(".xlsx"):
-                            df = pd.read_excel(tmp_path)
-                        elif file_info["file_path"].lower().endswith(".csv"):
-                            df = pd.read_csv(tmp_path)
-                        else:
-                            df = None
-                        rows_count = contar_filas_archivo(file_info["file_path"], df)
-                    finally:
-                        try:
-                            os.remove(tmp_path)
-                        except Exception:
-                            pass
-                except Exception as e:
-                    logger.warning(f"Error descargando {file_info['file_path']} para contar filas: {str(e)}")
-                    rows_count = 0
-            
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.warning(f"Error descargando {file_info['file_path']} para contar filas: {str(e)}")
+                filas_count = 0
+
             existing = session.query(Archivo).filter_by(archivo_id=file_info["file_id"]).first()
             
             if existing:
                 existing.nombre = file_info["file_name"]
                 existing.ruta = file_info["file_path"]
-                existing.url = file_download_url
-                existing.rows = rows_count
+                existing.url = file_view_url
+                existing.filas = filas_count
                 session.commit()
                 results["actualizados"].append(file_info["file_path"])
             else:
@@ -442,23 +455,65 @@ def save_files_to_database(excel_files, headers, site_id, drive_id):
                     archivo_id=file_info["file_id"],
                     nombre=file_info["file_name"],
                     ruta=file_info["file_path"],
-                    url=file_download_url,
-                    rows=rows_count
+                    url=file_view_url,
+                    filas=filas_count
                 )
                 session.add(file_record)
                 session.commit()
                 results["guardados"].append(file_info["file_path"])
+
+            # PASO 2: Ahora sí crear Ejecucion (el Archivo ya existe)
+            ejecucion = get_or_create_ejecucion(file_info["file_id"], EjecucionEstado.EN_PROCESO.value)
+
+            etapa_extraccion = start_etapa(ejecucion, EtapaNombre.EXTRACCION)
+            complete_etapa(etapa_extraccion)
+
+            etapa_limpieza = start_etapa(ejecucion, EtapaNombre.LIMPIEZA)
+            complete_etapa(etapa_limpieza)
             
-            logger.info(f"Archivo registrado: {file_info['file_name']} ({rows_count} filas)")
+            logger.info(f"Archivo registrado: {file_info['file_name']} ({filas_count} filas)")
+
+            complete_etapa(etapa_limpieza)
             
             # Clasificar archivos por tipo
             if Document.CARTERA_MULTAS.value in file_info["file_path"] or Document.CARTERA_DERECHOS_DE_TRANSITO.value in file_info["file_path"]:
-                archivos_cartera.append((file_info["file_id"], file_info["file_path"], headers, site_id, drive_id))
+                etapa_guardado = start_etapa(ejecucion, EtapaNombre.GUARDADO)
+                archivos_cartera.append({
+                    "file_id": file_info["file_id"],
+                    "file_path": file_info["file_path"],
+                    "headers": headers,
+                    "site_id": site_id,
+                    "drive_id": drive_id,
+                    "ejecucion_id": ejecucion.id,
+                    "etapa_guardado_id": etapa_guardado.id
+                })
             elif Document.RECAUDO_MULTAS.value in file_info["file_path"] or Document.RECAUDO_DERECHOS_DE_TRANSITO.value in file_info["file_path"]:
-                archivos_recaudo.append(file_info)
+                etapa_guardado = start_etapa(ejecucion, EtapaNombre.GUARDADO)
+                archivos_recaudo.append({
+                    "file_id": file_info["file_id"],
+                    "file_path": file_info["file_path"],
+                    "headers": headers,
+                    "site_id": site_id,
+                    "drive_id": drive_id,
+                    "ejecucion_id": ejecucion.id,
+                    "etapa_guardado_id": etapa_guardado.id
+                })
+            else:
+                complete_ejecucion(ejecucion)
                     
         except Exception as e:
             session.rollback()
+            try:
+                if etapa_extraccion:
+                    fail_etapa(etapa_extraccion)
+                if etapa_limpieza:
+                    fail_etapa(etapa_limpieza)
+                if etapa_guardado:
+                    fail_etapa(etapa_guardado)
+                if ejecucion:
+                    fail_ejecucion(ejecucion)
+            except Exception:
+                pass
             results["errores"].append({
                 "archivo": file_info["file_path"],
                 "error": str(e)
@@ -467,9 +522,14 @@ def save_files_to_database(excel_files, headers, site_id, drive_id):
     # PASO 1.5: Ordenar archivos de cartera por tamaño (pequeños primero)
     logger.info(f"📦 Obteniendo tamaños de {len(archivos_cartera)} archivos de cartera...")
     archivos_con_tamaño = []
-    for file_id, file_path, hdrs, s_id, d_id in archivos_cartera:
+    for cartera_item in archivos_cartera:
+        file_id = cartera_item["file_id"]
+        file_path = cartera_item["file_path"]
+        hdrs = cartera_item["headers"]
+        s_id = cartera_item["site_id"]
+        d_id = cartera_item["drive_id"]
         tamaño = obtener_tamaño_archivo(file_id, d_id, hdrs)
-        archivos_con_tamaño.append(((file_id, file_path, hdrs, s_id, d_id), tamaño))
+        archivos_con_tamaño.append((cartera_item, tamaño))
     
     # Ordenar por tamaño ascendente (pequeños primero para paralelismo óptimo)
     archivos_con_tamaño.sort(key=lambda x: x[1])
@@ -484,9 +544,31 @@ def save_files_to_database(excel_files, headers, site_id, drive_id):
     if archivos_cartera:
         try:
             with Pool(processes=NUM_WORKERS) as pool:
-                cartera_results = pool.map(procesar_archivo_cartera, archivos_cartera)
+                cartera_results = pool.map(
+                    procesar_archivo_cartera,
+                    [
+                        (item["file_id"], item["file_path"], item["headers"], item["site_id"], item["drive_id"])
+                        for item in archivos_cartera
+                    ]
+                )
                 
-            for resultado in cartera_results:
+            for cartera_item, resultado in zip(archivos_cartera, cartera_results):
+                try:
+                    etapa_guardado = session.query(Etapa).filter_by(id=cartera_item["etapa_guardado_id"]).first()
+                    ejecucion = session.query(Ejecucion).filter_by(id=cartera_item["ejecucion_id"]).first()
+                    if resultado:
+                        if etapa_guardado:
+                            complete_etapa(etapa_guardado)
+                        if ejecucion:
+                            complete_ejecucion(ejecucion)
+                    else:
+                        if etapa_guardado:
+                            fail_etapa(etapa_guardado)
+                        if ejecucion:
+                            fail_ejecucion(ejecucion)
+                except Exception as status_error:
+                    logger.error(f"Error actualizando estado de cartera: {str(status_error)}")
+
                 if resultado:
                     results["procesados"].append({
                         "archivo": resultado.get("archivo_path", "desconocido"),
@@ -501,27 +583,35 @@ def save_files_to_database(excel_files, headers, site_id, drive_id):
     logger.info(f"📊 Procesando {len(archivos_recaudo)} archivos de recaudos...")
     for file_info in archivos_recaudo:
         try:
+            etapa_guardado = session.query(Etapa).filter_by(id=file_info["etapa_guardado_id"]).first()
+            ejecucion = session.query(Ejecucion).filter_by(id=file_info["ejecucion_id"]).first()
+
             for enum_item in Document:
                 if enum_item.value in file_info["file_path"]:
                     if enum_item == Document.RECAUDO_MULTAS:
                         resultado = get_recaudos_multas(
                             file_info["file_id"],
                             file_info["file_path"],
-                            headers,
-                            site_id,
-                            drive_id
+                            file_info["headers"],
+                            file_info["site_id"],
+                            file_info["drive_id"]
                         )
                     elif enum_item == Document.RECAUDO_DERECHOS_DE_TRANSITO:
                         resultado = get_recaudos_derechos(
                             file_info["file_id"],
                             file_info["file_path"],
-                            headers,
-                            site_id,
-                            drive_id
+                            file_info["headers"],
+                            file_info["site_id"],
+                            file_info["drive_id"]
                         )
                     else:
                         break
                     
+                    if etapa_guardado:
+                        complete_etapa(etapa_guardado)
+                    if ejecucion:
+                        complete_ejecucion(ejecucion)
+
                     results["procesados"].append({
                         "archivo": file_info["file_path"],
                         "tipo": enum_item.name,
@@ -533,6 +623,13 @@ def save_files_to_database(excel_files, headers, site_id, drive_id):
                     
         except Exception as e:
             session.rollback()
+            try:
+                if etapa_guardado:
+                    fail_etapa(etapa_guardado)
+                if ejecucion:
+                    fail_ejecucion(ejecucion)
+            except Exception:
+                pass
             results["errores"].append({
                 "archivo": file_info["file_path"],
                 "error": str(e)
