@@ -427,6 +427,12 @@ def save_files_to_database(excel_files, headers, site_id, drive_id):
         etapa_limpieza = None
         etapa_guardado = None
         try:
+            existing = session.query(Archivo).filter_by(archivo_id=file_info["file_id"]).first()
+            if existing:
+                logger.info(f"Archivo ya registrado, se omite reprocesamiento: {file_info['file_name']} ({file_info['file_id']})")
+                results["actualizados"].append(file_info["file_path"])
+                continue
+
             # PASO 1: Crear/actualizar Archivo PRIMERO (antes de crear Ejecucion)
             # Esto previene violaciones de foreign key
             # Generar URL de descarga con file_id y drive_id (NO uses downloadUrl que expira)
@@ -457,26 +463,16 @@ def save_files_to_database(excel_files, headers, site_id, drive_id):
                 logger.warning(f"Error descargando {file_info['file_path']} para contar filas: {str(e)}")
                 filas_count = 0
 
-            existing = session.query(Archivo).filter_by(archivo_id=file_info["file_id"]).first()
-            
-            if existing:
-                existing.nombre = file_info["file_name"]
-                existing.ruta = file_info["file_path"]
-                existing.url = file_view_url
-                existing.filas = filas_count
-                session.commit()
-                results["actualizados"].append(file_info["file_path"])
-            else:
-                file_record = Archivo(
-                    archivo_id=file_info["file_id"],
-                    nombre=file_info["file_name"],
-                    ruta=file_info["file_path"],
-                    url=file_view_url,
-                    filas=filas_count
-                )
-                session.add(file_record)
-                session.commit()
-                results["guardados"].append(file_info["file_path"])
+            file_record = Archivo(
+                archivo_id=file_info["file_id"],
+                nombre=file_info["file_name"],
+                ruta=file_info["file_path"],
+                url=file_view_url,
+                filas=filas_count
+            )
+            session.add(file_record)
+            session.commit()
+            results["guardados"].append(file_info["file_path"])
 
             # PASO 2: Ahora sí crear Ejecucion (el Archivo ya existe)
             ejecucion = get_or_create_ejecucion(file_info["file_id"], EjecucionEstado.EN_PROCESO.value)

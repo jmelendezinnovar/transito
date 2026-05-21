@@ -35,30 +35,6 @@ CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "100000"))
 PROGRESS_LOG_EVERY = int(os.getenv("PROGRESS_LOG_EVERY", "1000"))
 NUM_WORKERS = min(6, max(2, cpu_count() - 1))
 
-def marcar_carteras_inactivas(organismo: str, tipo_cartera: str):
-    """Marca como inactivas todas las carteras del mismo organismo y tipo antes de reimportar."""
-    db = Session()
-    try:
-        db.query(Cartera).filter_by(
-            organismo=organismo,
-            tipo_cartera=tipo_cartera
-        ).update(
-            {Cartera.estado_cartera_final: WalletStatus.INACTIVE.value},
-            synchronize_session=False
-        )
-        db.commit()
-    except Exception as e:
-        try:
-            db.rollback()
-        except Exception:
-            pass
-        logger.error(f"Error marcando carteras inactivas para {organismo}/{tipo_cartera}: {str(e)}")
-    finally:
-        try:
-            db.close()
-        except Exception:
-            pass
-
 def build_sharepoint_view_url(web_url: Optional[str], archivo_id: str) -> str:
     base_url = (web_url or "").split("?")[0].rstrip("/")
     if not base_url:
@@ -388,6 +364,12 @@ def save_datos_sucios_to_database(excel_files, headers, site_id, drive_id, batch
         etapa_limpieza = None
         etapa_guardado = None
         try:
+            existing = session.query(Archivo).filter_by(archivo_id=file_info["file_id"]).first()
+            if existing:
+                logger.info(f"Archivo ya registrado, se omite reprocesamiento: {file_info['file_name']} ({file_info['file_id']})")
+                results["actualizados"].append(file_info["file_path"])
+                continue
+
             file_download_url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{file_info['file_id']}/content"
             filas_count = 0
             file_view_url = build_sharepoint_view_url(file_info.get("webUrl"), file_info["file_id"])
@@ -415,26 +397,16 @@ def save_datos_sucios_to_database(excel_files, headers, site_id, drive_id, batch
                 logger.warning(f"Error descargando {file_info['file_path']} para contar filas: {str(e)}")
                 filas_count = 0
 
-            existing = session.query(Archivo).filter_by(archivo_id=file_info["file_id"]).first()
-            
-            if existing:
-                existing.nombre = file_info["file_name"]
-                existing.ruta = file_info["file_path"]
-                existing.url = file_view_url
-                existing.filas = filas_count
-                session.commit()
-                results["actualizados"].append(file_info["file_path"])
-            else:
-                file_record = Archivo(
-                    archivo_id=file_info["file_id"],
-                    nombre=file_info["file_name"],
-                    ruta=file_info["file_path"],
-                    url=file_view_url,
-                    filas=filas_count
-                )
-                session.add(file_record)
-                session.commit()
-                results["guardados"].append(file_info["file_path"])
+            file_record = Archivo(
+                archivo_id=file_info["file_id"],
+                nombre=file_info["file_name"],
+                ruta=file_info["file_path"],
+                url=file_view_url,
+                filas=filas_count
+            )
+            session.add(file_record)
+            session.commit()
+            results["guardados"].append(file_info["file_path"])
 
             # PASO 2: Ahora sí crear Ejecucion (el Archivo ya existe)
             ejecucion = get_or_create_ejecucion(file_info["file_id"], EjecucionEstado.EN_PROCESO.value)
@@ -681,7 +653,6 @@ def get_carteras_multas(file_id, file_path, headers, site_id, drive_id):
             return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
 
         organismo = extract_organismo(file_path)
-        marcar_carteras_inactivas(organismo, "MULTAS")
         total_guardadas = 0
         total_errores = 0
 
@@ -830,7 +801,6 @@ def get_carteras_derechos(file_id, file_path, headers, site_id, drive_id):
             return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
 
         organismo = extract_organismo(file_path)
-        marcar_carteras_inactivas(organismo, "DERECHOS DE TRANSITO")
         total_guardadas = 0
         total_errores = 0
 
