@@ -34,6 +34,15 @@ PROGRESS_LOG_EVERY = int(os.getenv("PROGRESS_LOG_EVERY", "1000"))
 AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
 SCOPE = ["https://graph.microsoft.com/.default"]
 
+
+def _normalized_path_for_match(file_path: str) -> str:
+    cleaned = (file_path or "").strip().upper().strip("/")
+    return f"/{cleaned}/"
+
+
+def _path_matches_document(file_path: str, document: Document) -> bool:
+    return document.value.upper() in _normalized_path_for_match(file_path)
+
 def build_sharepoint_view_url(web_url: str | None, archivo_id: str) -> str:
     base_url = (web_url or "").split("?")[0].rstrip("/")
     if not base_url:
@@ -399,9 +408,9 @@ def procesar_archivo_cartera(args_tuple):
     
     # Determinar tipo y procesar
     resultado = None
-    if Document.CARTERA_MULTAS.value in file_path:
+    if _path_matches_document(file_path, Document.CARTERA_MULTAS):
         resultado = get_carteras_multas(file_id, file_path, headers, site_id, drive_id)
-    elif Document.CARTERA_DERECHOS_DE_TRANSITO.value in file_path:
+    elif _path_matches_document(file_path, Document.CARTERA_DERECHOS_DE_TRANSITO):
         resultado = get_carteras_derechos(file_id, file_path, headers, site_id, drive_id)
     
     if resultado:
@@ -498,7 +507,7 @@ def save_files_to_database(excel_files, headers, site_id, drive_id):
             complete_etapa(etapa_limpieza)
             
             # Clasificar archivos por tipo
-            if Document.CARTERA_MULTAS.value in file_info["file_path"] or Document.CARTERA_DERECHOS_DE_TRANSITO.value in file_info["file_path"]:
+            if _path_matches_document(file_info["file_path"], Document.CARTERA_MULTAS) or _path_matches_document(file_info["file_path"], Document.CARTERA_DERECHOS_DE_TRANSITO):
                 etapa_guardado = start_etapa(ejecucion, EtapaNombre.GUARDADO)
                 archivos_cartera.append({
                     "file_id": file_info["file_id"],
@@ -509,7 +518,7 @@ def save_files_to_database(excel_files, headers, site_id, drive_id):
                     "ejecucion_id": ejecucion.id,
                     "etapa_guardado_id": etapa_guardado.id
                 })
-            elif Document.RECAUDO_MULTAS.value in file_info["file_path"] or Document.RECAUDO_DERECHOS_DE_TRANSITO.value in file_info["file_path"]:
+            elif _path_matches_document(file_info["file_path"], Document.RECAUDO_MULTAS) or _path_matches_document(file_info["file_path"], Document.RECAUDO_DERECHOS_DE_TRANSITO):
                 etapa_guardado = start_etapa(ejecucion, EtapaNombre.GUARDADO)
                 archivos_recaudo.append({
                     "file_id": file_info["file_id"],
@@ -525,6 +534,7 @@ def save_files_to_database(excel_files, headers, site_id, drive_id):
                     
         except Exception as e:
             session.rollback()
+            logger.error(f"Error registrando archivo {file_info.get('file_path', 'desconocido')}: {str(e)}")
             try:
                 if etapa_extraccion:
                     fail_etapa(etapa_extraccion)
@@ -609,7 +619,7 @@ def save_files_to_database(excel_files, headers, site_id, drive_id):
             ejecucion = session.query(Ejecucion).filter_by(id=file_info["ejecucion_id"]).first()
 
             for enum_item in Document:
-                if enum_item.value in file_info["file_path"]:
+                if _path_matches_document(file_info["file_path"], enum_item):
                     if enum_item == Document.RECAUDO_MULTAS:
                         resultado = get_recaudos_multas(
                             file_info["file_id"],
@@ -657,6 +667,11 @@ def save_files_to_database(excel_files, headers, site_id, drive_id):
                 "error": str(e)
             })
     
+    if results["errores"]:
+        logger.error(f"Errores durante registro/procesamiento: {len(results['errores'])}")
+        for item in results["errores"][:3]:
+            logger.error(f"Archivo con error: {item['archivo']} -> {item['error']}")
+
     elapsed_total = time.time() - start_total
     logger.info(f"✅ Proceso completado en {elapsed_total:.2f}s (archivos: {len(excel_files)})")
     
