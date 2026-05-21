@@ -166,29 +166,51 @@ def download_with_retries(url: str, dest_path: str, headers: Dict = None, timeou
     - `timeout` es una tupla (connect_timeout, read_timeout).
     - Devuelve la ruta del archivo descargado o lanza excepción.
     """
-    session = requests.Session()
-    retries = Retry(
-        total=max_retries,
-        backoff_factor=1,
-        status_forcelist=[429, 500, 502, 503, 504],
-        allowed_methods=["GET", "HEAD"]
-    )
-    adapter = HTTPAdapter(max_retries=retries)
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-
     hdrs = headers or {}
     hdrs.setdefault("Accept-Encoding", "identity")
     hdrs.setdefault("Connection", "keep-alive")
 
-    with session.get(url, headers=hdrs, stream=True, timeout=timeout) as r:
-        r.raise_for_status()
-        with open(dest_path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=chunk_size):
-                if chunk:
-                    f.write(chunk)
+    last_error = None
+    for attempt in range(1, max_retries + 1):
+        http_session = requests.Session()
+        retries = Retry(
+            total=0,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET", "HEAD"]
+        )
+        adapter = HTTPAdapter(max_retries=retries)
+        http_session.mount("https://", adapter)
+        http_session.mount("http://", adapter)
 
-    return dest_path
+        try:
+            with http_session.get(url, headers=hdrs, stream=True, timeout=timeout) as r:
+                r.raise_for_status()
+                expected_len = int(r.headers.get("Content-Length", "0") or 0)
+                written = 0
+
+                with open(dest_path, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=chunk_size):
+                        if chunk:
+                            f.write(chunk)
+                            written += len(chunk)
+
+                if expected_len and written != expected_len:
+                    raise IOError(f"Descarga incompleta: {written} bytes, esperados {expected_len}")
+
+            return dest_path
+        except Exception as e:
+            last_error = e
+            logger.warning(f"Descarga fallida intento {attempt}/{max_retries}: {str(e)}")
+            if attempt < max_retries:
+                time.sleep(min(2 ** attempt, 10))
+        finally:
+            try:
+                http_session.close()
+            except Exception:
+                pass
+
+    raise last_error if last_error else Exception("Error desconocido en descarga")
 
 def search_excel_files(drive_id, item_id, headers, site_id, path="", depth=0):
     """Búsqueda de archivos Excel con paginación y límite de profundidad"""

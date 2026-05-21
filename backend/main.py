@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+from threading import Lock
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -21,6 +22,9 @@ from backend.models import Session, Archivo, Ejecucion, Etapa
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+_sync_lock = Lock()
+_sync_running = False
 
 load_dotenv()
 
@@ -89,6 +93,14 @@ app.add_middleware(
 
 def procesar_sincronizacion_sharepoint():
     """Ejecuta la sincronización completa fuera del ciclo de respuesta del webhook."""
+    global _sync_running
+
+    with _sync_lock:
+        if _sync_running:
+            logger.warning("Webhook: sincronizacion ya en progreso, se omite ejecucion duplicada")
+            return
+        _sync_running = True
+
     try:
         data = get_sharepoint_files()
         excel_files = data["files"]
@@ -105,6 +117,9 @@ def procesar_sincronizacion_sharepoint():
         logger.info(f"Webhook: proceso completado. {total_procesados} archivos procesados")
     except Exception as e:
         logger.error(f"Error procesando sincronización en background: {str(e)}")
+    finally:
+        with _sync_lock:
+            _sync_running = False
 
 
 @app.get("/datos-sucios")
@@ -180,6 +195,16 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
 
 @app.get("/registrar-documento")
 async def registrar_documento():
+    with _sync_lock:
+        if _sync_running:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "estado": "en_progreso",
+                    "mensaje": "Ya hay una sincronización en ejecución"
+                }
+            )
+
     try:
         data = get_sharepoint_files()
         excel_files = data["files"]
