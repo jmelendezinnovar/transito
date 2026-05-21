@@ -101,21 +101,6 @@ def fail_ejecucion(ejecucion: Ejecucion):
     ejecucion.finalizado = datetime.now()
     session.commit()
 
-def marcar_carteras_inactivas(organismo: str, tipo_cartera: str):
-    """Marca como inactivas todas las carteras del mismo organismo y tipo antes de reimportar."""
-    try:
-        session.query(Cartera).filter_by(
-            organismo=organismo,
-            tipo_cartera=tipo_cartera
-        ).update(
-            {Cartera.estado_cartera_final: WalletStatus.INACTIVE.value},
-            synchronize_session=False
-        )
-        session.commit()
-    except Exception as e:
-        session.rollback()
-        logger.error(f"Error marcando carteras inactivas para {organismo}/{tipo_cartera}: {str(e)}")
-
 def get_access_token():
     app = msal.ConfidentialClientApplication(
         CLIENT_ID, authority=AUTHORITY, client_credential=CLIENT_SECRET
@@ -994,7 +979,6 @@ def get_carteras_multas(file_id, file_path, headers, site_id, drive_id):
             return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
         
         organismo = extract_organismo(file_path)
-        marcar_carteras_inactivas(organismo, "MULTAS")
         total_guardadas = 0
         total_errores = 0
         # Procesar en chunks lógicos (iloc)
@@ -1145,7 +1129,6 @@ def get_carteras_derechos(file_id, file_path, headers, site_id, drive_id):
             return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
         
         organismo = extract_organismo(file_path)
-        marcar_carteras_inactivas(organismo, "DERECHOS DE TRANSITO")
         total_guardadas = 0
         total_errores = 0
         
