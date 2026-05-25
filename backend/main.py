@@ -145,7 +145,7 @@ async def registrar_datos_sucios():
                 status_code=200,
                 content={
                     "estado": "exitoso",
-                    "mensaje": "No se encontraron archivos en DATOS SUCIOS",
+                    "mensaje": "No se encontraron archivos en la raiz del proyecto",
                     "total_encontrados": 0,
                     "guardados": [],
                     "actualizados": [],

@@ -43,6 +43,19 @@ def _normalized_path_for_match(file_path: str) -> str:
 def _path_matches_document(file_path: str, document: Document) -> bool:
     return document.value.upper() in _normalized_path_for_match(file_path)
 
+
+def _clean_numbered_prefix(value: str | None) -> str | None:
+    if not value:
+        return value
+
+    text = str(value).strip()
+    prefix, separator, rest = text.partition(".")
+    if separator and prefix.strip().isdigit():
+        cleaned = rest.strip()
+    else:
+        cleaned = text
+    return cleaned or None
+
 def build_sharepoint_view_url(web_url: str | None, archivo_id: str) -> str:
     base_url = (web_url or "").split("?")[0].rstrip("/")
     if not base_url:
@@ -740,15 +753,25 @@ def get_recaudos_multas(file_id, file_path, headers, site_id, drive_id):
                         fecha_comparendo=safe_datetime(row_dict, "COMP_FECHA"),
                         año_comparendo=safe_text(row_dict, "AÑO_COMPARENDO"),
                         prescripcion=safe_text(row_dict, "PRESCRIPCION"),
-                        tipo_comparendo=safe_text(row_dict, "TIPO_COMPARENDO"),
+                        tipo_comparendo=_clean_numbered_prefix(safe_text(row_dict, "TIPO_COMPARENDO")),
                         clase_vehiculo=safe_text(row_dict, "CLASE_VEHICULO"),
                         tipo=safe_text(row_dict, "TIPO"),
                         servicio_vehiculo=safe_text(row_dict, "SERVICIO_VEHICULO"),
                         valor_pagado=safe_text(row_dict, "VALOR_PAGADO"),
                         fecha_distribucion=safe_datetime(row_dict, "DISTRI_FECHA"),
                         resolucion_mp=safe_text(row_dict, "RESOLUCION_MP"),
-                        valor_inicial_cargado=safe_text(row_dict, "VALOR_INICIAL_CAR"),
-                        concepto=safe_text(row_dict, "CONCEPTO"),
+                        # Normalizar columnas entre formatos internos y externos
+                        valor_inicial_cargado=(
+                            safe_text(row_dict, "VALOR_INICIAL_CAR") or
+                            safe_text(row_dict, "VALOR_CARTERA") or
+                            safe_text(row_dict, "VALOR_CAR")
+                        ),
+                        concepto=(
+                            safe_text(row_dict, "CONCEPTO") or
+                            safe_text(row_dict, "CONCEPTO_PRINCIPAL") or
+                            safe_text(row_dict, "DETALLE") or
+                            safe_text(row_dict, "DESCRIPCION")
+                        ),
                         estado_cartera=safe_text(row_dict, "ESTADO_CARTERA"),
                         concepto_principal=safe_text(row_dict, "CONCEPTO_PRINCIPAL"),
                         gestion=safe_text(row_dict, "GESTION") or safe_text(row_dict, "GESTIÓN"),

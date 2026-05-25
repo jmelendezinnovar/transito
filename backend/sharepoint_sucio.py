@@ -11,9 +11,9 @@ from requests.adapters import HTTPAdapter
 from sqlalchemy.exc import SQLAlchemyError
 from urllib3.util.retry import Retry
 from datetime import datetime
-from backend.models import Archivo, Session, session, Cartera, Ejecucion, Etapa
-from backend.documents import WalletStatus, EjecucionEstado, EtapaNombre, EtapaEstado, Document
-from backend.utils import extract_organismo, safe_text
+from backend.models import Archivo, Session, session, Cartera, Ejecucion, Etapa, Recaudo
+from backend.documents import WalletStatus, EjecucionEstado, EtapaNombre, EtapaEstado, Document, TransitoNombre
+from backend.utils import extract_organismo, safe_text, safe_datetime, safe_int
 import time
 from multiprocessing import Pool, cpu_count
 
@@ -244,6 +244,88 @@ def _collect_files_from_folder(
 
     return files
 
+def _clean_numbered_prefix(value: str | None) -> str | None:
+    if not value:
+        return value
+
+    text = str(value).strip()
+    prefix, separator, rest = text.partition(".")
+    if separator and prefix.strip().isdigit():
+        cleaned = rest.strip()
+    else:
+        cleaned = text
+    return cleaned or None
+
+
+def _normalize_tabular_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = (
+        df.columns.astype(str)
+        .str.strip()
+        .str.upper()
+        .str.replace(" ", "_", regex=False)
+    )
+    return df
+
+
+def _leer_excel_multihojas(
+    tmp_path: str,
+    file_path: str,
+    header_rows: Optional[List[int]] = None,
+) -> pd.DataFrame:
+    workbook = pd.ExcelFile(tmp_path)
+    sheet_names = workbook.sheet_names
+
+    logger.info(
+        "Hojas detectadas en %s: %s",
+        file_path,
+        ", ".join(sheet_names) if sheet_names else "sin hojas",
+    )
+
+    dataframes = []
+    for sheet_index, sheet_name in enumerate(sheet_names):
+        header_row = header_rows[sheet_index] if header_rows and sheet_index < len(header_rows) else 3
+        sheet_df = pd.read_excel(workbook, sheet_name=sheet_name, header=header_row)
+        logger.info("Hoja %s: %s filas", sheet_name, len(sheet_df))
+        dataframes.append(_normalize_tabular_columns(sheet_df))
+
+    if not dataframes:
+        return pd.DataFrame()
+
+    return pd.concat(dataframes, ignore_index=True, sort=False)
+
+
+def _load_recaudos_multas_dataframe(file_path: str, tmp_path: str) -> pd.DataFrame:
+    file_name = file_path.upper()
+
+    if file_path.lower().endswith(".csv"):
+        return _normalize_tabular_columns(pd.read_csv(tmp_path, low_memory=False))
+
+    if not file_path.lower().endswith((".xlsx", ".xls")):
+        raise ValueError(f"Formato de archivo no soportado: {file_path}")
+
+    if TransitoNombre.TURBACO.value in file_name:
+        workbook = pd.ExcelFile(tmp_path)
+        if not workbook.sheet_names:
+            return pd.DataFrame()
+
+        dataframes = []
+        logger.info(
+            "Hojas detectadas en %s: %s",
+            file_path,
+            ", ".join(workbook.sheet_names),
+        )
+
+        for sheet_index, sheet_name in enumerate(workbook.sheet_names):
+            header_row = 3
+            sheet_df = pd.read_excel(workbook, sheet_name=sheet_name, header=header_row)
+            logger.info("Hoja %s: %s filas", sheet_name, len(sheet_df))
+            dataframes.append(_normalize_tabular_columns(sheet_df))
+
+        return pd.concat(dataframes, ignore_index=True, sort=False)
+
+    return _leer_excel_multihojas(tmp_path, file_path)
+
 def contar_filas_archivo(file_path: str, df: pd.DataFrame) -> int:
     try:
         if df is not None and not df.empty:
@@ -252,16 +334,105 @@ def contar_filas_archivo(file_path: str, df: pd.DataFrame) -> int:
     except Exception as e:
         logger.warning(f"Error contando filas de {file_path}: {str(e)}")
         return 0
+
+def _extraer_anio_valido(value) -> Optional[int]:
+    if value is None:
+        return None
+
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+
+    if isinstance(value, (int, float)):
+        try:
+            year = int(value)
+            return year if 1900 <= year <= 2100 else None
+        except Exception:
+            return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    parsed = pd.to_datetime(text, errors="coerce", dayfirst=True)
+    if not pd.isna(parsed):
+        return int(parsed.year)
+
+    digits = "".join(char for char in text if char.isdigit())
+    if len(digits) >= 4:
+        try:
+            year = int(digits[-4:])
+            return year if 1900 <= year <= 2100 else None
+        except Exception:
+            return None
+
+    return None
+
+def _leer_tabular_file(tmp_path: str, file_path: str) -> pd.DataFrame:
+    archivo = file_path.lower()
+    if archivo.endswith((".xlsx", ".xls")):
+        return _leer_excel_multihojas(tmp_path, file_path)
+    if archivo.endswith(".csv"):
+        return pd.read_csv(tmp_path, low_memory=False)
+    raise ValueError(f"Formato no soportado: {file_path}")
+
+
+def _load_recaudos_multas_dataframe(file_path: str, tmp_path: str) -> pd.DataFrame:
+    file_name = file_path.upper()
+
+    if file_path.lower().endswith(".csv"):
+        df = _leer_tabular_file(tmp_path, file_path)
+        df["ORIGEN_RECAUDO"] = "RECAUDO EXTERNO"
+        return df
+
+    if not file_path.lower().endswith((".xlsx", ".xls")):
+        raise ValueError(f"Formato de archivo no soportado: {file_path}")
+
+    if TransitoNombre.TURBACO.value in file_name:
+        workbook = pd.ExcelFile(tmp_path)
+        if not workbook.sheet_names:
+            return pd.DataFrame()
+
+        logger.info(
+            "Hojas detectadas en %s: %s",
+            file_path,
+            ", ".join(workbook.sheet_names),
+        )
+
+        dataframes = []
+        for sheet_index, sheet_name in enumerate(workbook.sheet_names):
+            header_row = 3
+            sheet_df = pd.read_excel(workbook, sheet_name=sheet_name, header=header_row)
+            logger.info("Hoja %s: %s filas", sheet_name, len(sheet_df))
+            sheet_df = _normalize_tabular_columns(sheet_df)
+            sheet_df["ORIGEN_RECAUDO"] = "RECAUDO INTERNO" if sheet_index == 0 else "RECAUDO EXTERNO"
+            dataframes.append(sheet_df)
+
+        return pd.concat(dataframes, ignore_index=True, sort=False)
+
+    df = _leer_tabular_file(tmp_path, file_path)
+    df["ORIGEN_RECAUDO"] = "RECAUDO EXTERNO"
+    return df
     
 def get_datos_sucios_files() -> Dict:
     headers = get_graph_headers()
     site_id, drive_id = get_sharepoint_site_and_drive(headers)
 
-    folder = _find_folder_by_name(drive_id, headers, "DATOS SUCIOS")
-    if not folder:
-        raise Exception("No se encontro la carpeta DATOS SUCIOS en SharePoint")
+    folder = {
+        "id": "root",
+        "name": "root",
+        "path": "",
+        "webUrl": None,
+    }
 
     files = _collect_files_from_folder(drive_id, folder["id"], headers, folder["path"])
+    if not files:
+        logger.warning("No se encontraron archivos en SharePoint")
+    else:
+        logger.info("Se procesaran todos los archivos encontrados en SharePoint")
+
     files.sort(key=lambda file_info: file_info.get("createdDateTime", ""))
 
     for index, file_info in enumerate(files, 1):
@@ -311,12 +482,10 @@ def descargar_y_parsear_excel(file_id: str, file_path: str, headers: Dict, drive
             return None
 
         # Leer archivo desde disco (evita cargar contenido entero en memoria)
-        if file_path.lower().endswith(".xlsx"):
-            df = pd.read_excel(tmp_path)
-        elif file_path.lower().endswith(".csv"):
-            df = pd.read_csv(tmp_path)
-        else:
-            logger.error(f"Formato no soportado: {file_path}")
+        try:
+            df = _leer_tabular_file(tmp_path, file_path)
+        except Exception as error:
+            logger.error(str(error))
             try:
                 os.remove(tmp_path)
             except Exception:
@@ -381,11 +550,9 @@ def save_datos_sucios_to_database(excel_files, headers, site_id, drive_id, batch
 
                 try:
                     download_with_retries(file_download_url, tmp_path, headers=headers, timeout=(10, 900))
-                    if file_info["file_path"].lower().endswith(".xlsx"):
-                        df = pd.read_excel(tmp_path)
-                    elif file_info["file_path"].lower().endswith(".csv"):
-                        df = pd.read_csv(tmp_path)
-                    else:
+                    try:
+                        df = _leer_tabular_file(tmp_path, file_info["file_path"])
+                    except Exception:
                         df = None
                     filas_count = contar_filas_archivo(file_info["file_path"], df)
                 finally:
@@ -526,65 +693,107 @@ def save_datos_sucios_to_database(excel_files, headers, site_id, drive_id, batch
             logger.error(f"Error en parallelización de carteras: {str(e)}")
     
     # PASO 3: Procesar RECAUDOS secuencialmente (más eficiente por su tamaño)
-    # logger.info(f"📊 Procesando {len(archivos_recaudo)} archivos de recaudos...")
-    # for file_info in archivos_recaudo:
-    #     try:
-    #         etapa_guardado = session.query(Etapa).filter_by(id=file_info["etapa_guardado_id"]).first()
-    #         ejecucion = session.query(Ejecucion).filter_by(id=file_info["ejecucion_id"]).first()
+    logger.info(f"📊 Procesando {len(archivos_recaudo)} archivos de recaudos...")
+    for file_info in archivos_recaudo:
+        try:
+            etapa_guardado = session.query(Etapa).filter_by(id=file_info["etapa_guardado_id"]).first()
+            ejecucion = session.query(Ejecucion).filter_by(id=file_info["ejecucion_id"]).first()
 
-    #         for enum_item in Document:
-    #             if enum_item.value in file_info["file_path"]:
-    #                 if enum_item == Document.RECAUDO_MULTAS:
-    #                     resultado = get_recaudos_multas(
-    #                         file_info["file_id"],
-    #                         file_info["file_path"],
-    #                         file_info["headers"],
-    #                         file_info["site_id"],
-    #                         file_info["drive_id"]
-    #                     )
-    #                 elif enum_item == Document.RECAUDO_DERECHOS_DE_TRANSITO:
-    #                     resultado = get_recaudos_derechos(
-    #                         file_info["file_id"],
-    #                         file_info["file_path"],
-    #                         file_info["headers"],
-    #                         file_info["site_id"],
-    #                         file_info["drive_id"]
-    #                     )
-    #                 else:
-    #                     break
+            for enum_item in Document:
+                if enum_item.value in file_info["file_path"]:
+                    if enum_item == Document.RECAUDO_MULTAS:
+                        resultado = get_recaudos_multas(
+                            file_info["file_id"],
+                            file_info["file_path"],
+                            file_info["headers"],
+                            file_info["site_id"],
+                            file_info["drive_id"]
+                        )
+                    elif enum_item == Document.RECAUDO_DERECHOS_DE_TRANSITO:
+                        resultado = get_recaudos_derechos(
+                            file_info["file_id"],
+                            file_info["file_path"],
+                            file_info["headers"],
+                            file_info["site_id"],
+                            file_info["drive_id"]
+                        )
+                    else:
+                        break
                     
-    #                 if etapa_guardado:
-    #                     complete_etapa(etapa_guardado)
-    #                 if ejecucion:
-    #                     complete_ejecucion(ejecucion)
+                    if etapa_guardado:
+                        complete_etapa(etapa_guardado)
+                    if ejecucion:
+                        complete_ejecucion(ejecucion)
 
-    #                 results["procesados"].append({
-    #                     "archivo": file_info["file_path"],
-    #                     "tipo": enum_item.name,
-    #                     "filas_procesadas": resultado["filas_procesadas"],
-    #                     "guardadas": resultado["guardadas"],
-    #                     "errores": resultado["errores"]
-    #                 })
-    #                 break
+                    results["procesados"].append({
+                        "archivo": file_info["file_path"],
+                        "tipo": enum_item.name,
+                        "filas_procesadas": resultado["filas_procesadas"],
+                        "guardadas": resultado["guardadas"],
+                        "errores": resultado["errores"]
+                    })
+                    break
                     
-    #     except Exception as e:
-    #         session.rollback()
-    #         try:
-    #             if etapa_guardado:
-    #                 fail_etapa(etapa_guardado)
-    #             if ejecucion:
-    #                 fail_ejecucion(ejecucion)
-    #         except Exception:
-    #             pass
-    #         results["errores"].append({
-    #             "archivo": file_info["file_path"],
-    #             "error": str(e)
-    #         })
+        except Exception as e:
+            session.rollback()
+            try:
+                if etapa_guardado:
+                    fail_etapa(etapa_guardado)
+                if ejecucion:
+                    fail_ejecucion(ejecucion)
+            except Exception:
+                pass
+            results["errores"].append({
+                "archivo": file_info["file_path"],
+                "error": str(e)
+            })
     
     elapsed_total = time.time() - start_total
     logger.info(f"✅ Proceso completado en {elapsed_total:.2f}s (archivos: {len(excel_files)})")
     
     return results
+
+def batch_insert_records(records: List, batch_size: int = BATCH_SIZE):
+    """Inserta registros en lotes masivos (50k/commit) con optimización de BD"""
+    if not records:
+        return
+    
+    start_time = time.time()
+    total_inserted = 0
+    
+    def model_to_mapping(obj):
+        # Convierte una instancia ORM a mapping plano, excluyendo metadatos de SQLAlchemy
+        d = {}
+        for k, v in obj.__dict__.items():
+            if k == '_sa_instance_state':
+                continue
+            d[k] = v
+        return d
+
+    for i in range(0, len(records), batch_size):
+        batch = records[i:i + batch_size]
+        db_session = Session()
+        try:
+            mappings = [model_to_mapping(r) for r in batch]
+            cls = batch[0].__class__
+            db_session.bulk_insert_mappings(cls, mappings)
+            db_session.commit()
+            total_inserted += len(batch)
+            db_session.close()
+            logger.debug(f"✓ Batch insertado: {len(batch):,} registros")
+        except SQLAlchemyError as e:
+            try:
+                db_session.rollback()
+            except Exception:
+                pass
+            logger.error(f"Error en batch insert: {str(e)}")
+            try:
+                db_session.close()
+            except Exception:
+                pass
+    
+    elapsed = time.time() - start_time
+    logger.info(f"Total insertados: {total_inserted:,} registros en {elapsed:.2f}s ({total_inserted/elapsed:,.0f} filas/seg)")
 
 def procesar_archivo_cartera(args_tuple):
     file_id, file_path, headers, site_id, drive_id = args_tuple
@@ -628,16 +837,275 @@ def get_carteras_multas(file_id, file_path, headers, site_id, drive_id):
             return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
 
         # Leer archivo
-        if file_path.lower().endswith(".xlsx"):
-            df = pd.read_excel(tmp_path)
-            df.columns = (
-                df.columns.str.strip()
-                .str.upper()
-                .str.replace(" ", "_", regex=False)
+        try:
+            df = _load_recaudos_multas_dataframe(file_path, tmp_path)
+        except Exception as error:
+            logger.error(str(error))
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+            return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
+
+        if TransitoNombre.TURBACO.value in file_path.upper() and file_path.lower().endswith((".xlsx", ".xls")):
+            total_interno = int((df["ORIGEN_RECAUDO"] == "RECAUDO INTERNO").sum()) if "ORIGEN_RECAUDO" in df.columns else 0
+            total_externo = int((df["ORIGEN_RECAUDO"] == "RECAUDO EXTERNO").sum()) if "ORIGEN_RECAUDO" in df.columns else 0
+            logger.info(
+                "Excel TURBACO combinado: total=%s, interno=%s, externo=%s",
+                len(df),
+                total_interno,
+                total_externo,
             )
+        elif file_path.lower().endswith(".xlsx"):
             logger.info(f"Excel leído: {len(df)} filas")
         elif file_path.lower().endswith(".csv"):
-            df = pd.read_csv(tmp_path)
+            logger.info(f"CSV leído: {len(df)} filas")
+
+        organismo = extract_organismo(file_path)
+        total_guardadas = 0
+        total_errores = 0
+
+        logger.info(
+            "Columnas detectadas en multas: %s",
+            ", ".join(df.columns.tolist()[:60])
+        )
+
+        for chunk_start in range(0, len(df), CHUNK_SIZE):
+            df_chunk = df.iloc[chunk_start:chunk_start + CHUNK_SIZE]
+            chunk_len = len(df_chunk)
+            logger.info(f"Procesando filas {chunk_start} a {chunk_start + chunk_len} ({chunk_len} filas)")
+
+            db_session = Session()
+            insert_mappings = []
+            rows_in_chunk = 0
+            descartes_apellido = 0
+            descartes_estado = 0
+            descartes_anio = 0
+            muestra_descartes = []
+            registros_descartados = []
+
+            def registrar_descarte(motivo: str, row_dict: Dict, estado: str, anio: object) -> None:
+                nonlocal registros_descartados
+                detalle = {
+                    "motivo": motivo,
+                    "codigo": str(row_dict.get('CODIGO', '') or ''),
+                    "nombre": safe_text(row_dict, 'NOMBRE_INFRACTOR'),
+                    "apellido": safe_text(row_dict, 'APELLIDO'),
+                    "estado": estado,
+                    "anio": anio,
+                    "comparendo": safe_text(row_dict, 'NUMERO_COMPARENDO') or safe_text(row_dict, 'COMPARENDO'),
+                    "placa": safe_text(row_dict, 'PLACA'),
+                    "fecha": safe_text(row_dict, 'FECHA_COMPARENDO') or safe_text(row_dict, 'FECHA'),
+                }
+                registros_descartados.append(detalle)
+                logger.warning("Fila multa no registrada: %s", detalle)
+
+            chunk_start_time = time.time()
+            for idx, row in enumerate(df_chunk.itertuples(index=False, name='Record')):
+                try:
+                    rows_in_chunk += 1
+                    row_dict = row._asdict()
+                    codigo = str(row_dict.get('CODIGO', '') or '')
+                    apellido = safe_text(row_dict, 'APELLIDO')
+                    # Eliminar filas con apellido indeterminado
+                    if apellido and apellido.strip().upper() == 'INDETERMINADO':
+                        descartes_apellido += 1
+                        if len(muestra_descartes) < 5:
+                            muestra_descartes.append({
+                                "motivo": "apellido",
+                                "codigo": codigo,
+                                "apellido": apellido,
+                                "estado": safe_text(row_dict, 'ESTADO_COMPARENDO') or safe_text(row_dict, 'ESTADO_CARTERA') or safe_text(row_dict, 'ESTADO') or '',
+                                "anio": safe_text(row_dict, 'AÑO_COMPARENDO') or safe_text(row_dict, 'FECHA_COMPARENDO') or safe_text(row_dict, 'FECHA') or ''
+                            })
+                        registrar_descarte(
+                            "apellido",
+                            row_dict,
+                            safe_text(row_dict, 'ESTADO_COMPARENDO') or safe_text(row_dict, 'ESTADO_CARTERA') or safe_text(row_dict, 'ESTADO') or '',
+                            safe_text(row_dict, 'AÑO_COMPARENDO') or safe_text(row_dict, 'FECHA_COMPARENDO') or safe_text(row_dict, 'FECHA') or ''
+                        )
+                        continue
+
+                    # Filtrar por estado del comparendo (sancionado, vigente, acuerdo de pago)
+                    estado_comp = (
+                        safe_text(row_dict, 'ESTADO_COMPARENDO') or
+                        safe_text(row_dict, 'ESTADO_CARTERA') or
+                        safe_text(row_dict, 'ESTADO') or
+                        ''
+                    ).upper()
+                    if not any(k in estado_comp for k in ('SANCION', 'VIGENTE', 'ACUERDO DE PAGO', 'ACUERDO')):
+                        descartes_estado += 1
+                        if len(muestra_descartes) < 5:
+                            muestra_descartes.append({
+                                "motivo": "estado",
+                                "codigo": codigo,
+                                "apellido": apellido,
+                                "estado": estado_comp,
+                                "anio": safe_text(row_dict, 'AÑO_COMPARENDO') or safe_text(row_dict, 'FECHA_COMPARENDO') or safe_text(row_dict, 'FECHA') or ''
+                            })
+                        registrar_descarte(
+                            "estado",
+                            row_dict,
+                            estado_comp,
+                            safe_text(row_dict, 'AÑO_COMPARENDO') or safe_text(row_dict, 'FECHA_COMPARENDO') or safe_text(row_dict, 'FECHA') or ''
+                        )
+                        continue
+
+                    # Filtrar por año de comparendo (2015 en adelante)
+                    year_source = (
+                        safe_text(row_dict, "TO_CHAR(FECHA_COMPARENDO,'YYYY')") or
+                        safe_text(row_dict, 'AÑO_COMPARENDO') or
+                        safe_text(row_dict, 'FECHA_COMPARENDO') or
+                        safe_text(row_dict, 'FECHA') or
+                        ''
+                    )
+                    year_int = _extraer_anio_valido(year_source)
+                    if year_int is None or year_int < 2015:
+                        descartes_anio += 1
+                        if len(muestra_descartes) < 5:
+                            muestra_descartes.append({
+                                "motivo": "anio",
+                                "codigo": codigo,
+                                "apellido": apellido,
+                                "estado": estado_comp,
+                                "anio": year_source
+                            })
+                        registrar_descarte(
+                            "anio",
+                            row_dict,
+                            estado_comp,
+                            year_source
+                        )
+                        continue
+
+                    # Limpiar formatos de fecha (remover puntos)
+                    fecha_raw = safe_text(row_dict, 'FECHA_COMPARENDO') or ''
+                    fecha_clean = fecha_raw.replace('.', '') if fecha_raw else None
+                    notif_raw = safe_text(row_dict, 'NOTIF_FECHA') or ''
+                    notif_clean = notif_raw.replace('.', '') if notif_raw else None
+
+                    insert_mappings.append({
+                        'archivo_id': file_id,
+                        'organismo': organismo,
+                        'codigo': codigo,
+                        'tipo_cartera': 'MULTAS',
+                        'estado_cartera_final': WalletStatus.ACTIVE.value,
+                        'fecha': fecha_clean,
+                        'tipo_comparendo': safe_text(row_dict, 'TIPO_COMPARENDO'),
+                        'clase': safe_text(row_dict, 'CLASE'),
+                        'servicio': safe_text(row_dict, 'SERVICIO'),
+                        'valor_inicial_cartera': safe_text(row_dict, 'CART_VALOR_INICIAL'),
+                        'numero_referencia_cartera': safe_text(row_dict, 'CART_NRO_REFERENCIA'),
+                        'estado_cartera': safe_text(row_dict, 'ESTADO_CARTERA'),
+                        'fecha_inicio_cartera': safe_text(row_dict, 'CART_FECHA_INGRESO'),
+                        'estado_gestion': safe_text(row_dict, 'ESTADO_GESTION'),
+                        'capital': safe_text(row_dict, 'CAPITAL'),
+                        'total': safe_text(row_dict, 'TOTAL'),
+                        'resolucion_fecha': safe_text(row_dict, 'RESOLUCION_FECHA'),
+                        'intereses': safe_text(row_dict, 'INTERESES'),
+                        'placa': safe_text(row_dict, 'PLACA'),
+                        'tipo_identificacion': safe_text(row_dict, 'TIPO_IDENTIFICACION'),
+                        'numero_identificacion': safe_text(row_dict, 'NUMERO_IDENTIFICACION'),
+                        'nombre_infractor': safe_text(row_dict, 'NOMBRE_INFRACTOR'),
+                        'numero_comparendo': safe_text(row_dict, 'NUMERO_COMPARENDO'),
+                        'estado_comparendo': estado_comp,
+                        'infraccion': safe_text(row_dict, 'INFRACCION'),
+                        'resolucion_sancion': safe_text(row_dict, 'RESOLUCION_SANCION'),
+                        'mandamiento_de_pago': safe_text(row_dict, 'MANDAMIENTO_DE_PAGO'),
+                        'fecha_mandamiento_de_pago': safe_text(row_dict, 'FECHA_MANDAMIENTO'),
+                        'fecha_de_notificacion': notif_clean,
+                        'clase_vehiculo': safe_text(row_dict, 'CLASE_VEHICULO'),
+                        'año_comparendo': str(year_int),
+                        'ciudad': safe_text(row_dict, 'NOMBRE_CIUDAD'),
+                        'direccion': safe_text(row_dict, 'DIR_DIRECCION'),
+                        'telefono': safe_text(row_dict, 'DIR_TELEFONO'),
+                        'movil': safe_text(row_dict, 'MOVIL'),
+                        'email': safe_text(row_dict, 'EMAIL')
+                    })
+
+                    total_guardadas += 1
+
+                    if rows_in_chunk % PROGRESS_LOG_EVERY == 0:
+                        elapsed = time.time() - chunk_start_time
+                        logger.info(f"Progreso chunk: {rows_in_chunk}/{chunk_len} filas procesadas en este chunk, total guardadas: {total_guardadas} - {elapsed:.1f}s")
+
+                except Exception as e:
+                    total_errores += 1
+                    logger.warning(f"Error en fila: {str(e)[:100]}")
+
+            try:
+                if insert_mappings:
+                    for j in range(0, len(insert_mappings), BATCH_SIZE):
+                        sub = insert_mappings[j:j + BATCH_SIZE]
+                        db_session.bulk_insert_mappings(Cartera, sub)
+                db_session.commit()
+            except SQLAlchemyError as e:
+                logger.error(f"Error aplicando bulk updates/inserts: {e}")
+                try:
+                    db_session.rollback()
+                except Exception:
+                    pass
+            finally:
+                try:
+                    db_session.close()
+                except Exception:
+                    pass
+
+            logger.info(
+                "Resumen chunk multas %s-%s: leidas=%s, guardadas=%s, descartadas_apellido=%s, descartadas_estado=%s, descartadas_anio=%s",
+                chunk_start,
+                chunk_start + chunk_len,
+                rows_in_chunk,
+                len(insert_mappings),
+                descartes_apellido,
+                descartes_estado,
+                descartes_anio,
+            )
+            if muestra_descartes:
+                logger.info("Muestra de descartes multas: %s", muestra_descartes)
+            if registros_descartados:
+                logger.info("Total de filas no registradas en este chunk: %s", len(registros_descartados))
+
+        logger.info(f"Total guardadas: {total_guardadas}, Total errores: {total_errores}")
+
+        try:
+            os.remove(tmp_path)
+        except Exception:
+            pass
+
+        return {
+            "filas_procesadas": total_guardadas + total_errores,
+            "guardadas": total_guardadas,
+            "errores": total_errores
+        }
+    except Exception as e:
+        logger.error(f"Error procesando archivo {file_path}: {str(e)}")
+        return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
+
+def get_carteras_derechos(file_id, file_path, headers, site_id, drive_id):
+    """Procesa archivo de carteras de DERECHOS DE TRANSITO (CSV/XLSX) en chunks y lo guarda en la tabla `Cartera`."""
+    try:
+        download_url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{file_id}/content"
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_path)[1]) as tmpf:
+            tmp_path = tmpf.name
+
+        try:
+            download_with_retries(download_url, tmp_path, headers=headers, timeout=(10, 900))
+        except Exception as e:
+            logger.error(f"Error descargando archivo: {str(e)}")
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+            return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
+
+        # Leer archivo
+        if file_path.lower().endswith(".xlsx"):
+            df = _leer_excel_multihojas(tmp_path, file_path)
+            logger.info(f"Excel leído: {len(df)} filas")
+        elif file_path.lower().endswith(".csv"):
+            df = pd.read_csv(tmp_path, low_memory=False)
             df.columns = (
                 df.columns.str.strip()
                 .str.upper()
@@ -670,9 +1138,434 @@ def get_carteras_multas(file_id, file_path, headers, site_id, drive_id):
                     rows_in_chunk += 1
                     row_dict = row._asdict()
                     codigo = str(row_dict.get('CODIGO', '') or '')
+                    nombre = safe_text(row_dict, 'NOMBRE')
                     apellido = safe_text(row_dict, 'APELLIDO')
-                    if apellido and apellido.strip().upper() == 'INDETERMINADO':
+                    # Descartar filas con apellido indeterminado o nombres que indiquen persona indeterminada
+                    if apellido and (
+                        apellido.strip().upper() == 'INDETERMINADO' or 
+                        apellido.strip().upper() == 'DESCONOCIDO' or 
+                        apellido.strip().upper() == 'NO IDENTIFICADO' or
+                        apellido.strip().upper() == 'INDETERMINADA'
+                    ):
                         continue
+
+                    if nombre and (
+                        nombre.strip().upper() == 'INDETERMINADO' or 
+                        nombre.strip().upper() == 'DESCONOCIDO' or 
+                        nombre.strip().upper() == 'NO IDENTIFICADO' or
+                        nombre.strip().upper() == 'INDETERMINADA'
+                    ):
+                        continue
+
+                    insert_mappings.append({
+                            'archivo_id': file_id,
+                            'organismo': organismo,
+                            'codigo': codigo,
+                            'tipo_cartera': 'DERECHOS DE TRANSITO',
+                            'estado_cartera_final': WalletStatus.ACTIVE.value,
+                            'fecha': safe_text(row_dict, 'FECHA_CARTERA') or safe_text(row_dict, 'FECHA CARTERA'),
+                            'valor_inicial_cartera': safe_text(row_dict, 'CARTERA_VALOR_INICIAL'),
+                            'numero_referencia_cartera': safe_text(row_dict, 'REFERENCIA'),
+                            'estado_cartera': safe_text(row_dict, 'ESTADO_CARTERA') or safe_text(row_dict, 'ESTADO CARTERA'),
+                            'estado_gestion': safe_text(row_dict, 'ESTADO_GESTION'),
+                            'capital': safe_text(row_dict, 'CAPITAL'),
+                            'total': safe_text(row_dict, 'TOTAL'),
+                            'fecha_inicio_cartera': safe_text(row_dict, 'CARTERA_FECHA_DE_INGRESO'),
+                            'intereses': safe_text(row_dict, 'INTERESES'),
+                            'placa': safe_text(row_dict, 'PLACA'),
+                            'clase': safe_text(row_dict, 'CLASE'),
+                            'servicio': safe_text(row_dict, 'SERVICIO'),
+                            'tipo_identificacion': safe_text(row_dict, 'TIPO_IDENTIFICACION'),
+                            'numero_identificacion': safe_text(row_dict, 'NUMERO_IDENTIFICACION'),
+                            'nombre_infractor': (
+                                ' '.join(
+                                    p for p in (
+                                        nombre,
+                                        apellido
+                                    ) if p
+                                ) or None
+                            ),
+                            'email': safe_text(row_dict, 'EMAIL'),
+                            'modelo': safe_text(row_dict, 'MODELO'),
+                            'telefono': safe_text(row_dict, 'TELEFONO_MOVIL'),
+                            'fecha_propietario': safe_text(row_dict, 'FECHA_PROPIETARIO'),
+                            'filtro_coactivo': safe_text(row_dict, 'FILTRO_COACTIVO'),
+                            'clase_vehiculo': safe_text(row_dict, 'CLASE_VEHICULO'),
+                            'direccion': safe_text(row_dict, 'DIRECCION'),
+                            'mp_resolucion': safe_text(row_dict, 'MP_RESOLUCION'),
+                            'fecha_mp': safe_text(row_dict, 'FECHA_MP')
+                        })
+
+                    total_guardadas += 1
+
+                    if rows_in_chunk % PROGRESS_LOG_EVERY == 0:
+                        elapsed = time.time() - chunk_start_time
+                        logger.info(f"Progreso chunk: {rows_in_chunk}/{chunk_len} filas procesadas en este chunk, total guardadas: {total_guardadas} - {elapsed:.1f}s")
+
+                except Exception as e:
+                    total_errores += 1
+                    logger.warning(f"Error en fila: {str(e)[:100]}")
+
+            try:
+                if insert_mappings:
+                    for j in range(0, len(insert_mappings), BATCH_SIZE):
+                        sub = insert_mappings[j:j + BATCH_SIZE]
+                        db_session.bulk_insert_mappings(Cartera, sub)
+                db_session.commit()
+            except SQLAlchemyError as e:
+                logger.error(f"Error aplicando bulk updates/inserts (derechos): {e}")
+                try:
+                    db_session.rollback()
+                except Exception:
+                    pass
+            finally:
+                try:
+                    db_session.close()
+                except Exception:
+                    pass
+
+        logger.info(f"Total guardadas: {total_guardadas}, Total errores: {total_errores}")
+
+        return {
+            "filas_procesadas": total_guardadas + total_errores,
+            "guardadas": total_guardadas,
+            "errores": total_errores
+        }
+    except Exception as e:
+        logger.error(f"Error procesando archivo {file_path}: {str(e)}")
+        return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
+
+def get_recaudos_multas(file_id, file_path, headers, site_id, drive_id):
+    """
+    Lee un archivo de recaudos de multas (Excel o CSV) en CHUNKS.
+    Usa itertuples() en lugar de iterrows() (100x más rápido).
+    Batch insert de 5000 filas (40 commits en lugar de 200k).
+    """
+    try:
+        download_url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{file_id}/content"
+
+        # Descargar en streaming a temp file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_path)[1]) as tmpf:
+            tmp_path = tmpf.name
+
+        try:
+            download_with_retries(download_url, tmp_path, headers=headers, timeout=(10, 900))
+        except Exception as e:
+            logger.error(f"Error descargando archivo: {str(e)}")
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+            return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
+
+        # Leer archivo
+        if file_path.lower().endswith(".xlsx"):
+            df = _leer_excel_multihojas(tmp_path, file_path)
+            logger.info(f"Excel leído: {len(df)} filas")
+        elif file_path.lower().endswith(".csv"):
+            df = pd.read_csv(tmp_path)
+            df.columns = (
+                df.columns.str.strip()
+                .str.upper()
+                .str.replace(" ", "_", regex=False)
+            )
+            logger.info(f"CSV leído: {len(df)} filas")
+        else:
+            logger.error(f"Formato de archivo no soportado: {file_path}")
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+            return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
+        
+        organismo = extract_organismo(file_path)
+        total_guardadas = 0
+        total_errores = 0
+        
+        # Procesar en chunks lógicos (iloc)
+        for chunk_start in range(0, len(df), CHUNK_SIZE):
+            df_chunk = df.iloc[chunk_start:chunk_start + CHUNK_SIZE]
+            chunk_len = len(df_chunk)
+            logger.info(f"Procesando filas {chunk_start} a {chunk_start + chunk_len} ({chunk_len} filas)")
+
+            records = []
+            rows_in_chunk = 0
+            chunk_start_time = time.time()
+            for row in df_chunk.itertuples(index=False, name='Record'):
+                try:
+                    rows_in_chunk += 1
+                    row_dict = row._asdict()
+                    
+                    recaudo = Recaudo(
+                        archivo_id=file_id,
+                        organismo=organismo,
+                        tipo_recaudo="MULTAS",
+                        origen_recaudo=safe_text(row_dict, "ORIGEN_RECAUDO"),
+                        fuente=safe_text(row_dict, "FUENTE"),
+                        fecha_pago=safe_datetime(row_dict, "FECHA_PAGO") or safe_datetime(row_dict, "_1"),
+                        recibo=safe_text(row_dict, "RECIBO"),
+                        valor_recibido=safe_text(row_dict, "VALOR_RECIBO"),
+                        tipo_documento=safe_text(row_dict, "TIPO_DOCUMENTO"),
+                        identificacion=safe_text(row_dict, "IDENTIFICACION"),
+                        nombre=safe_text(row_dict, "NOMBRE"),
+                        vehiculo_placa=safe_text(row_dict, "VEHI_PLACA"),
+                        comparendo=safe_text(row_dict, "COMPARENDO"),
+                        fecha_comparendo=safe_datetime(row_dict, "COMP_FECHA"),
+                        año_comparendo=safe_text(row_dict, "AÑO_COMPARENDO"),
+                        prescripcion=safe_text(row_dict, "PRESCRIPCION"),
+                        tipo_comparendo=_clean_numbered_prefix(safe_text(row_dict, "TIPO_COMPARENDO")),
+                        clase_vehiculo=safe_text(row_dict, "CLASE_VEHICULO"),
+                        tipo=safe_text(row_dict, "TIPO"),
+                        servicio_vehiculo=safe_text(row_dict, "SERVICIO_VEHICULO"),
+                        valor_pagado=safe_text(row_dict, "VALOR_PAGADO"),
+                        fecha_distribucion=safe_datetime(row_dict, "DISTRI_FECHA"),
+                        resolucion_mp=safe_text(row_dict, "RESOLUCION_MP"),
+                        valor_inicial_cargado=(
+                            safe_text(row_dict, "VALOR_INICIAL_CAR") or
+                            safe_text(row_dict, "VALOR_CARTERA") or
+                            safe_text(row_dict, "VALOR_CAR")
+                        ),
+                        concepto=(
+                            safe_text(row_dict, "CONCEPTO") or
+                            safe_text(row_dict, "CONCEPTO_PRINCIPAL") or
+                            safe_text(row_dict, "DETALLE") or
+                            safe_text(row_dict, "DESCRIPCION")
+                        ),
+                        estado_cartera=safe_text(row_dict, "ESTADO_CARTERA"),
+                        concepto_principal=safe_text(row_dict, "CONCEPTO_PRINCIPAL"),
+                        gestion=safe_text(row_dict, "GESTION") or safe_text(row_dict, "GESTIÓN"),
+                        descuento_cartera=safe_text(row_dict, "DESCUENTO_CARTERA"),
+                        descuento_de_intereses=safe_text(row_dict, "DES_INTERESES"),
+                        cantidad_de_descuento_cartera=safe_int(row_dict, "CANT_DESTO_CARTERA"),
+                        cantidad_de_descuento_de_intereses=safe_int(row_dict, "CANT_DES_INTERESES"),
+                        resolucion_sancion=safe_text(row_dict, "RESOLUCIÓN_SANCIÓN"),
+                        fecha_resolucion_sancion=safe_datetime(row_dict, "FECHA_RESOLUCION_SANCIÓN"),
+                        valor_pagado_de_intereses=safe_text(row_dict, "VALOR_PAGADO_INTERESES")
+                    )
+                    records.append(recaudo)
+                    total_guardadas += 1
+
+                    # Log de progreso periódico para detectar si el proceso se detuvo
+                    if rows_in_chunk % PROGRESS_LOG_EVERY == 0:
+                        elapsed = time.time() - chunk_start_time
+                        logger.info(f"Progreso chunk: {rows_in_chunk}/{chunk_len} filas procesadas en este chunk, total guardadas: {total_guardadas} (chunk {chunk_start}-{chunk_start+chunk_len}) - {elapsed:.1f}s")
+                    
+                except Exception as e:
+                    total_errores += 1
+                    logger.warning(f"Error en fila: {str(e)[:100]}")
+            
+            # Insertar lote (batch_insert_records hace batch_size = 5000)
+            if records:
+                batch_insert_records(records, BATCH_SIZE)
+        
+        logger.info(f"Total guardadas: {total_guardadas}, Total errores: {total_errores}")
+
+        try:
+            os.remove(tmp_path)
+        except Exception:
+            pass
+
+        return {
+            "filas_procesadas": total_guardadas + total_errores,
+            "guardadas": total_guardadas,
+            "errores": total_errores
+        }
+        
+    except Exception as e:
+        logger.error(f"Error procesando archivo {file_path}: {str(e)}")
+        return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
+    
+def get_recaudos_derechos(file_id, file_path, headers, site_id, drive_id):
+    """Versión optimizada: chunks + itertuples + batch insert"""
+    try:
+        download_url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{file_id}/content"
+
+        # Descargar en streaming a temp file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_path)[1]) as tmpf:
+            tmp_path = tmpf.name
+
+        try:
+            download_with_retries(download_url, tmp_path, headers=headers, timeout=(10, 900))
+        except Exception as e:
+            logger.error(f"Error descargando archivo: {str(e)}")
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+            return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
+
+        # Leer archivo
+        if file_path.lower().endswith(".xlsx"):
+            df = _leer_excel_multihojas(tmp_path, file_path)
+            logger.info(f"Excel leído: {len(df)} filas")
+        elif file_path.lower().endswith(".csv"):
+            df = pd.read_csv(tmp_path)
+            df.columns = (
+                df.columns.str.strip()
+                .str.upper()
+                .str.replace(" ", "_", regex=False)
+            )
+            logger.info(f"CSV leído: {len(df)} filas")
+        else:
+            logger.error(f"Formato de archivo no soportado: {file_path}")
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+            return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
+        
+        organismo = extract_organismo(file_path)
+        total_guardadas = 0
+        total_errores = 0
+        
+        # Procesar en chunks lógicos (iloc)
+        for chunk_start in range(0, len(df), CHUNK_SIZE):
+            df_chunk = df.iloc[chunk_start:chunk_start + CHUNK_SIZE]
+            chunk_len = len(df_chunk)
+            logger.info(f"Procesando filas {chunk_start} a {chunk_start + chunk_len} ({chunk_len} filas)")
+
+            records = []
+            rows_in_chunk = 0
+            chunk_start_time = time.time()
+            for row in df_chunk.itertuples(index=False, name='Record'):
+                try:
+                    rows_in_chunk += 1
+                    row_dict = row._asdict()
+                    
+                    recaudo = Recaudo(
+                        archivo_id=file_id,
+                        organismo=organismo,
+                        tipo_recaudo="DERECHOS DE TRANSITO",
+                        fuente=safe_text(row_dict, "FUENTE"),
+                        fecha_pago=safe_datetime(row_dict, "FECHA_PAGO") or safe_datetime(row_dict, "FECHA PAGO") or safe_datetime(row_dict, "_1"),
+                        recibo=safe_text(row_dict, "RECIBO"),
+                        recibo_pago=safe_text(row_dict, "RECIBO_PAGO"),
+                        valor_recibido=safe_text(row_dict, "VALOR_RECIBO"),
+                        tipo_documento=safe_text(row_dict, "TIPO_DOCUMENTO"),
+                        identificacion=safe_text(row_dict, "IDENTIFICACION"),
+                        nombre=safe_text(row_dict, "NOMBRE"),
+                        vehiculo_placa=safe_text(row_dict, "VEHI_PLACA") or safe_text(row_dict, "PLACA"),
+                        comparendo=safe_text(row_dict, "COMPARENDO") or safe_text(row_dict, "CODIGO"),
+                        fecha_comparendo=safe_datetime(row_dict, "COMP_FECHA") or safe_datetime(row_dict, "FECHA_COMPARENDO"),
+                        año_comparendo=safe_text(row_dict, "AÑO_COMPARENDO"),
+                        prescripcion=safe_text(row_dict, "PRESCRIPCION"),
+                        tipo_comparendo=safe_text(row_dict, "TIPO_COMPARENDO"),
+                        clase_vehiculo=safe_text(row_dict, "CLASE_VEHICULO") or safe_text(row_dict, "CLASE"),
+                        tipo=safe_text(row_dict, "TIPO"),
+                        servicio_vehiculo=safe_text(row_dict, "SERVICIO_VEHICULO") or safe_text(row_dict, "SERVICIO"),
+                        valor_pagado=safe_text(row_dict, "VALOR_PAGADO"),
+                        fecha_distribucion=safe_datetime(row_dict, "DISTRI_FECHA"),
+                        resolucion_mp=safe_text(row_dict, "RESOLUCION_MP"),
+                        valor_inicial_cargado=safe_text(row_dict, "VALOR_INICIAL_CAR") or safe_text(row_dict, "CART_VALOR_INICIAL") or safe_text(row_dict, "CARTERA_VALOR_INICIAL"),
+                        concepto=safe_text(row_dict, "CONCEPTO"),
+                        fecha_cartera=safe_datetime(row_dict, "FECHA_CARTERA") or safe_datetime(row_dict, "FECHA CARTERA"),
+                        estado_cartera=safe_text(row_dict, "ESTADO_CARTERA") or safe_text(row_dict, "ESTADO CARTERA"),
+                        tipo_cartera=safe_text(row_dict, "TIPO_CARTERA") or "DERECHOS DE TRANSITO",
+                        concepto_principal=safe_text(row_dict, "CONCEPTO_PRINCIPAL"),
+                        gestion=safe_text(row_dict, "GESTION") or safe_text(row_dict, "GESTIÓN") or safe_text(row_dict, "ESTADO_GESTION"),
+                        descuento_cartera=safe_text(row_dict, "DESCUENTO_CARTERA"),
+                        descuento_de_intereses=safe_text(row_dict, "DES_INTERESES"),
+                        cantidad_de_descuento_cartera=safe_int(row_dict, "CANT_DESTO_CARTERA") or safe_int(row_dict, "CANT_DESCUENTO_CARTERA"),
+                        cantidad_de_descuento_de_intereses=safe_int(row_dict, "CANT_DES_INTERESES") or safe_int(row_dict, "CANT_DESCUENTO_INTERESES"),
+                        resolucion_sancion=safe_text(row_dict, "RESOLUCIÓN_SANCIÓN") or safe_text(row_dict, "RESOLUCION_SANCION"),
+                        fecha_resolucion_sancion=safe_datetime(row_dict, "FECHA_RESOLUCION_SANCIÓN") or safe_datetime(row_dict, "FECHA_RESOLUCION_SANCION"),
+                        valor_pagado_de_intereses=safe_text(row_dict, "VALOR_PAGADO_INTERESES"),
+                        acuerdos_de_pago=safe_text(row_dict, "ACUERDOS_DE_PAGO"),
+                        referencia=safe_text(row_dict, "REFERENCIA"),
+                        sistematizacion=safe_text(row_dict, "SISTEMATIZACION")
+                    )
+                    records.append(recaudo)
+                    
+                    total_guardadas += 1
+
+                    if rows_in_chunk % PROGRESS_LOG_EVERY == 0:
+                        elapsed = time.time() - chunk_start_time
+                        logger.info(f"Progreso chunk: {rows_in_chunk}/{chunk_len} filas procesadas en este chunk, total guardadas: {total_guardadas} - {elapsed:.1f}s")
+                    
+                except Exception as e:
+                    total_errores += 1
+                    logger.warning(f"Error en fila: {str(e)[:100]}")
+            
+            # Insertar lote
+            if records:
+                batch_insert_records(records, BATCH_SIZE)
+        
+        logger.info(f"Total guardadas: {total_guardadas}, Total errores: {total_errores}")
+
+        try:
+            os.remove(tmp_path)
+        except Exception:
+            pass
+
+        return {
+            "filas_procesadas": total_guardadas + total_errores,
+            "guardadas": total_guardadas,
+            "errores": total_errores
+        }
+        
+    except Exception as e:
+        logger.error(f"Error procesando archivo {file_path}: {str(e)}")
+        return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
+    
+def get_carteras_multas(file_id, file_path, headers, site_id, drive_id):
+    """Versión optimizada: chunks + itertuples + batch insert"""
+    try:
+        download_url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{file_id}/content"
+
+        # Descargar en streaming a temp file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_path)[1]) as tmpf:
+            tmp_path = tmpf.name
+
+        try:
+            download_with_retries(download_url, tmp_path, headers=headers, timeout=(10, 900))
+        except Exception as e:
+            logger.error(f"Error descargando archivo: {str(e)}")
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+            return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
+
+        # Leer archivo
+        if file_path.lower().endswith(".xlsx"):
+            df = _leer_excel_multihojas(tmp_path, file_path)
+            logger.info(f"Excel leído: {len(df)} filas")
+        elif file_path.lower().endswith(".csv"):
+            df = pd.read_csv(tmp_path)
+            df.columns = (
+                df.columns.str.strip()
+                .str.upper()
+                .str.replace(" ", "_", regex=False)
+            )
+            logger.info(f"CSV leído: {len(df)} filas")
+        else:
+            logger.error(f"Formato de archivo no soportado: {file_path}")
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+            return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
+        
+        organismo = extract_organismo(file_path)
+        total_guardadas = 0
+        total_errores = 0
+        # Procesar en chunks lógicos (iloc)
+        for chunk_start in range(0, len(df), CHUNK_SIZE):
+            df_chunk = df.iloc[chunk_start:chunk_start + CHUNK_SIZE]
+            chunk_len = len(df_chunk)
+            logger.info(f"Procesando filas {chunk_start} a {chunk_start + chunk_len} ({chunk_len} filas)")
+
+            # Crear sesión local para este chunk
+            db_session = Session()
+
+            insert_mappings = []
+            rows_in_chunk = 0
+            chunk_start_time = time.time()
+            for idx, row in enumerate(df_chunk.itertuples(index=False, name='Record')):
+                try:
+                    rows_in_chunk += 1
+                    row_dict = row._asdict()
+                    codigo = str(row_dict.get('CODIGO', '') or '')
 
                     insert_mappings.append({
                             'archivo_id': file_id,
@@ -712,7 +1605,7 @@ def get_carteras_multas(file_id, file_path, headers, site_id, drive_id):
                             'movil': safe_text(row_dict, 'MOVIL'),
                             'email': safe_text(row_dict, 'EMAIL')
                         })
-
+                    
                     total_guardadas += 1
 
                     if rows_in_chunk % PROGRESS_LOG_EVERY == 0:
@@ -722,9 +1615,11 @@ def get_carteras_multas(file_id, file_path, headers, site_id, drive_id):
                 except Exception as e:
                     total_errores += 1
                     logger.warning(f"Error en fila: {str(e)[:100]}")
-
+            
+            # Aplicar actualizaciones e inserciones en bloque
             try:
                 if insert_mappings:
+                    # dividir insert_mappings en sub-batches si es grande
                     for j in range(0, len(insert_mappings), BATCH_SIZE):
                         sub = insert_mappings[j:j + BATCH_SIZE]
                         db_session.bulk_insert_mappings(Cartera, sub)
@@ -740,156 +1635,13 @@ def get_carteras_multas(file_id, file_path, headers, site_id, drive_id):
                     db_session.close()
                 except Exception:
                     pass
-
+        
         logger.info(f"Total guardadas: {total_guardadas}, Total errores: {total_errores}")
 
         try:
             os.remove(tmp_path)
         except Exception:
             pass
-
-        return {
-            "filas_procesadas": total_guardadas + total_errores,
-            "guardadas": total_guardadas,
-            "errores": total_errores
-        }
-    except Exception as e:
-        logger.error(f"Error procesando archivo {file_path}: {str(e)}")
-        return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
-
-def get_carteras_derechos(file_id, file_path, headers, site_id, drive_id):
-    """Procesa archivo de carteras de DERECHOS DE TRANSITO (CSV/XLSX) en chunks y lo guarda en la tabla `Cartera`."""
-    try:
-        download_url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{file_id}/content"
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_path)[1]) as tmpf:
-            tmp_path = tmpf.name
-
-        try:
-            download_with_retries(download_url, tmp_path, headers=headers, timeout=(10, 900))
-        except Exception as e:
-            logger.error(f"Error descargando archivo: {str(e)}")
-            try:
-                os.remove(tmp_path)
-            except Exception:
-                pass
-            return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
-
-        # Leer archivo
-        if file_path.lower().endswith(".xlsx"):
-            df = pd.read_excel(tmp_path)
-            df.columns = (
-                df.columns.str.strip()
-                .str.upper()
-                .str.replace(" ", "_", regex=False)
-            )
-            logger.info(f"Excel leído: {len(df)} filas")
-        elif file_path.lower().endswith(".csv"):
-            df = pd.read_csv(tmp_path)
-            df.columns = (
-                df.columns.str.strip()
-                .str.upper()
-                .str.replace(" ", "_", regex=False)
-            )
-            logger.info(f"CSV leído: {len(df)} filas")
-        else:
-            logger.error(f"Formato de archivo no soportado: {file_path}")
-            try:
-                os.remove(tmp_path)
-            except Exception:
-                pass
-            return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
-
-        organismo = extract_organismo(file_path)
-        total_guardadas = 0
-        total_errores = 0
-
-        for chunk_start in range(0, len(df), CHUNK_SIZE):
-            df_chunk = df.iloc[chunk_start:chunk_start + CHUNK_SIZE]
-            chunk_len = len(df_chunk)
-            logger.info(f"Procesando filas {chunk_start} a {chunk_start + chunk_len} ({chunk_len} filas)")
-
-            db_session = Session()
-            insert_mappings = []
-            rows_in_chunk = 0
-            chunk_start_time = time.time()
-            for idx, row in enumerate(df_chunk.itertuples(index=False, name='Record')):
-                try:
-                    rows_in_chunk += 1
-                    row_dict = row._asdict()
-                    codigo = str(row_dict.get('CODIGO', '') or '')
-                    nombre = safe_text(row_dict, 'NOMBRE')
-                    apellido = safe_text(row_dict, 'APELLIDO')
-                    if apellido and apellido.strip().upper() == 'INDETERMINADO':
-                        continue
-
-                    insert_mappings.append({
-                            'archivo_id': file_id,
-                            'organismo': organismo,
-                            'codigo': codigo,
-                            'tipo_cartera': 'DERECHOS DE TRANSITO',
-                            'estado_cartera_final': WalletStatus.ACTIVE.value,
-                            'fecha': safe_text(row_dict, 'FECHA_CARTERA') or safe_text(row_dict, 'FECHA CARTERA'),
-                            'valor_inicial_cartera': safe_text(row_dict, 'CARTERA_VALOR_INICIAL'),
-                            'numero_referencia_cartera': safe_text(row_dict, 'REFERENCIA'),
-                            'estado_cartera': safe_text(row_dict, 'ESTADO_CARTERA') or safe_text(row_dict, 'ESTADO CARTERA'),
-                            'estado_gestion': safe_text(row_dict, 'ESTADO_GESTION'),
-                            'capital': safe_text(row_dict, 'CAPITAL'),
-                            'total': safe_text(row_dict, 'TOTAL'),
-                            'fecha_inicio_cartera': safe_text(row_dict, 'CARTERA_FECHA_DE_INGRESO'),
-                            'intereses': safe_text(row_dict, 'INTERESES'),
-                            'placa': safe_text(row_dict, 'PLACA'),
-                            'clase': safe_text(row_dict, 'CLASE'),
-                            'servicio': safe_text(row_dict, 'SERVICIO'),
-                            'tipo_identificacion': safe_text(row_dict, 'TIPO_IDENTIFICACION'),
-                            'numero_identificacion': safe_text(row_dict, 'NUMERO_IDENTIFICACION'),
-                            'nombre_infractor': (
-                                ' '.join(
-                                    p for p in (
-                                        nombre,
-                                        apellido
-                                    ) if p
-                                ) or None
-                            ),
-                            'email': safe_text(row_dict, 'EMAIL'),
-                            'telefono': safe_text(row_dict, 'TELEFONO_MOVIL'),
-                            'fecha_propietario': safe_text(row_dict, 'FECHA_PROPIETARIO'),
-                            'filtro_coactivo': safe_text(row_dict, 'FILTRO_COACTIVO'),
-                            'clase_vehiculo': safe_text(row_dict, 'CLASE_VEHICULO'),
-                            'direccion': safe_text(row_dict, 'DIRECCION'),
-                            'mp_resolucion': safe_text(row_dict, 'MP_RESOLUCION'),
-                            'fecha_mp': safe_text(row_dict, 'FECHA_MP')
-                        })
-
-                    total_guardadas += 1
-
-                    if rows_in_chunk % PROGRESS_LOG_EVERY == 0:
-                        elapsed = time.time() - chunk_start_time
-                        logger.info(f"Progreso chunk: {rows_in_chunk}/{chunk_len} filas procesadas en este chunk, total guardadas: {total_guardadas} - {elapsed:.1f}s")
-
-                except Exception as e:
-                    total_errores += 1
-                    logger.warning(f"Error en fila: {str(e)[:100]}")
-
-            try:
-                if insert_mappings:
-                    for j in range(0, len(insert_mappings), BATCH_SIZE):
-                        sub = insert_mappings[j:j + BATCH_SIZE]
-                        db_session.bulk_insert_mappings(Cartera, sub)
-                db_session.commit()
-            except SQLAlchemyError as e:
-                logger.error(f"Error aplicando bulk updates/inserts (derechos): {e}")
-                try:
-                    db_session.rollback()
-                except Exception:
-                    pass
-            finally:
-                try:
-                    db_session.close()
-                except Exception:
-                    pass
-
-        logger.info(f"Total guardadas: {total_guardadas}, Total errores: {total_errores}")
 
         return {
             "filas_procesadas": total_guardadas + total_errores,

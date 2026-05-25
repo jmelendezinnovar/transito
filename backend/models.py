@@ -50,6 +50,7 @@ try:
         archivo_id = Column(String, ForeignKey("archivos.archivo_id"), nullable=False)
         organismo = Column(String, nullable=False)
         tipo_recaudo = Column(String, nullable=False)
+        origen_recaudo = Column(String, nullable=True)
         fuente = Column(String, nullable=True)
         fecha_pago = Column(DateTime, nullable=True)
         recibo = Column(String, nullable=True)

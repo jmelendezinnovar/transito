@@ -28,3 +28,10 @@ class EtapaNombre(Enum):
     EXTRACCION = "Extrayendo"
     LIMPIEZA = "Limpiando"
     GUARDADO = "Guardando"
+
+class TransitoNombre(Enum):
+    BOLIVAR = "BOLIVAR"
+    CLEMENCIA = "CLEMENCIA"
+    SAN_JUAN = "SAN JUAN"
+    TURBACO = "TURBACO"
+    VILLA_DEL_ROSARIO = "VILLA DEL ROSARIO"
