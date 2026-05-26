@@ -130,6 +130,42 @@ def procesar_sincronizacion_sharepoint():
             _sync_running = False
             break
 
+def procesar_sincronizacion_sharepoint_v2():
+    global _sync_running, _sync_pending
+
+    with _sync_lock:
+        if _sync_running:
+            _sync_pending = True
+            logger.info("Webhook: sincronizacion en progreso; se agenda una nueva ejecucion al finalizar")
+            return
+        _sync_running = True
+        _sync_pending = False
+
+    while True:
+        try:
+            data = get_datos_sucios_files()
+            excel_files = data["files"]
+            headers = data["headers"]
+            site_id = data["site_id"]
+            drive_id = data["drive_id"]
+
+            if not excel_files:
+                logger.info("Webhook: no se encontraron archivos Excel para procesar")
+            else:
+                results = save_datos_sucios_to_database(excel_files, headers, site_id, drive_id)
+                total_procesados = len(results["guardados"]) + len(results["actualizados"])
+                logger.info(f"Webhook: proceso completado. {total_procesados} archivos procesados")
+        except Exception as e:
+            logger.error(f"Error procesando sincronización en background: {str(e)}")
+
+        with _sync_lock:
+            if _sync_pending:
+                logger.info("Webhook: se detecto notificacion pendiente, iniciando una nueva pasada")
+                _sync_pending = False
+                continue
+
+            _sync_running = False
+            break
 
 @app.get("/datos-sucios")
 async def registrar_datos_sucios():
@@ -196,7 +232,7 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
 
     validation_token = request.query_params.get("validationToken")
     
-    print("web hook actvado")
+    print("web hook activado")
 
     if validation_token:
         return PlainTextResponse(content=validation_token, status_code=200)
@@ -213,6 +249,31 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
             )
 
     background_tasks.add_task(procesar_sincronizacion_sharepoint)
+    return JSONResponse(status_code=202, content={"estado": "ok"})
+
+@app.post("/v2/webhook")
+async def webhook_v2(request: Request, background_tasks: BackgroundTasks):
+    global _sync_pending
+
+    validation_token = request.query_params.get("validationToken")
+    
+    print("web hook v2 activado")
+
+    if validation_token:
+        return PlainTextResponse(content=validation_token, status_code=200)
+
+    with _sync_lock:
+        if _sync_running:
+            _sync_pending = True
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "estado": "encolado",
+                    "mensaje": "Sincronizacion en progreso; se agendo una nueva ejecucion"
+                }
+            )
+
+    background_tasks.add_task(procesar_sincronizacion_sharepoint_v2)
     return JSONResponse(status_code=202, content={"estado": "ok"})
 
 @app.get("/registrar-documento")
@@ -285,16 +346,6 @@ async def registrar_documento():
                 "mensaje": f"Error al procesar: {str(e)}"
             }
         )
-
-@app.get("/health")
-async def health_check():
-    """
-    Endpoint de salud para verificar que la API está funcionando
-    """
-    return {
-        "estado": "ok",
-        "servicio": "API de Registro de Documentos"
-    }
 
 @app.get("/")
 async def root():

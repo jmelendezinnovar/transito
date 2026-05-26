@@ -13,7 +13,7 @@ from urllib3.util.retry import Retry
 from datetime import datetime
 from backend.models import Archivo, Session, session, Cartera, Ejecucion, Etapa, Recaudo
 from backend.documents import WalletStatus, EjecucionEstado, EtapaNombre, EtapaEstado, Document, TransitoNombre
-from backend.utils import extract_organismo, safe_text, safe_datetime, safe_int
+from backend.utils import extract_organismo, safe_text, safe_datetime, safe_int, safe_receipt
 import time
 from multiprocessing import Pool, cpu_count
 
@@ -34,6 +34,7 @@ SCOPE = ["https://graph.microsoft.com/.default"]
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "100000"))
 PROGRESS_LOG_EVERY = int(os.getenv("PROGRESS_LOG_EVERY", "1000"))
 NUM_WORKERS = min(6, max(2, cpu_count() - 1))
+FILE_ID = (os.getenv("FILE_ID") or "").strip()
 
 def build_sharepoint_view_url(web_url: Optional[str], archivo_id: str) -> str:
     base_url = (web_url or "").split("?")[0].rstrip("/")
@@ -295,6 +296,72 @@ def _leer_excel_multihojas(
     return pd.concat(dataframes, ignore_index=True, sort=False)
 
 
+def _leer_excel_villa_del_rosario_multas(tmp_path: str, file_path: str) -> pd.DataFrame:
+    workbook = pd.ExcelFile(tmp_path)
+    sheet_names = workbook.sheet_names
+
+    logger.info(
+        "Hojas detectadas en %s: %s",
+        file_path,
+        ", ".join(sheet_names) if sheet_names else "sin hojas",
+    )
+
+    parsed_rows: List[Dict] = []
+
+    for sheet_name in sheet_names:
+        raw_df = pd.read_excel(workbook, sheet_name=sheet_name, header=None, dtype=object)
+        logger.info("Hoja %s: %s filas crudas", sheet_name, len(raw_df))
+
+        current_headers: Optional[List[str]] = None
+        for row_index, row_values in enumerate(raw_df.itertuples(index=False, name=None), start=1):
+            values = list(row_values)
+            first_value = safe_text({"_0": values[0] if values else None}, "_0") or ""
+            first_value = first_value.strip().upper()
+
+            if not first_value and not any(values):
+                continue
+
+            if first_value.startswith("DETALLE RECAUDO") or first_value.startswith("DETALLE REC"):
+                logger.info(
+                    "Hoja %s fila %s omitida por titulo de seccion: %s",
+                    sheet_name,
+                    row_index,
+                    first_value,
+                )
+                current_headers = None
+                continue
+
+            if first_value == "FUENTE":
+                current_headers = []
+                for column_index, cell_value in enumerate(values):
+                    header_name = safe_text({"_0": cell_value}, "_0") or f"COL_{column_index}"
+                    header_name = header_name.strip().upper().replace(" ", "_")
+                    current_headers.append(header_name)
+
+                logger.info(
+                    "Encabezado detectado en hoja %s fila %s: %s",
+                    sheet_name,
+                    row_index,
+                    current_headers,
+                )
+                continue
+
+            if not current_headers:
+                continue
+
+            row_dict: Dict[str, object] = {}
+            for column_index, header_name in enumerate(current_headers):
+                cell_value = values[column_index] if column_index < len(values) else None
+                row_dict[header_name] = cell_value
+
+            parsed_rows.append(row_dict)
+
+    if not parsed_rows:
+        return pd.DataFrame()
+
+    return pd.DataFrame(parsed_rows)
+
+
 def _load_recaudos_multas_dataframe(file_path: str, tmp_path: str) -> pd.DataFrame:
     file_name = file_path.upper()
 
@@ -303,6 +370,9 @@ def _load_recaudos_multas_dataframe(file_path: str, tmp_path: str) -> pd.DataFra
 
     if not file_path.lower().endswith((".xlsx", ".xls")):
         raise ValueError(f"Formato de archivo no soportado: {file_path}")
+
+    if TransitoNombre.VILLA_DEL_ROSARIO.value in file_name:
+        return _leer_excel_villa_del_rosario_multas(tmp_path, file_path)
 
     if TransitoNombre.TURBACO.value in file_name:
         workbook = pd.ExcelFile(tmp_path)
@@ -327,6 +397,7 @@ def _load_recaudos_multas_dataframe(file_path: str, tmp_path: str) -> pd.DataFra
     return _leer_excel_multihojas(tmp_path, file_path)
 
 def contar_filas_archivo(file_path: str, df: pd.DataFrame) -> int:
+    logger.info(f"Contando filas en {file_path}...")
     try:
         if df is not None and not df.empty:
             return len(df)
@@ -377,44 +448,6 @@ def _leer_tabular_file(tmp_path: str, file_path: str) -> pd.DataFrame:
     if archivo.endswith(".csv"):
         return pd.read_csv(tmp_path, low_memory=False)
     raise ValueError(f"Formato no soportado: {file_path}")
-
-
-def _load_recaudos_multas_dataframe(file_path: str, tmp_path: str) -> pd.DataFrame:
-    file_name = file_path.upper()
-
-    if file_path.lower().endswith(".csv"):
-        df = _leer_tabular_file(tmp_path, file_path)
-        df["ORIGEN_RECAUDO"] = "RECAUDO EXTERNO"
-        return df
-
-    if not file_path.lower().endswith((".xlsx", ".xls")):
-        raise ValueError(f"Formato de archivo no soportado: {file_path}")
-
-    if TransitoNombre.TURBACO.value in file_name:
-        workbook = pd.ExcelFile(tmp_path)
-        if not workbook.sheet_names:
-            return pd.DataFrame()
-
-        logger.info(
-            "Hojas detectadas en %s: %s",
-            file_path,
-            ", ".join(workbook.sheet_names),
-        )
-
-        dataframes = []
-        for sheet_index, sheet_name in enumerate(workbook.sheet_names):
-            header_row = 3
-            sheet_df = pd.read_excel(workbook, sheet_name=sheet_name, header=header_row)
-            logger.info("Hoja %s: %s filas", sheet_name, len(sheet_df))
-            sheet_df = _normalize_tabular_columns(sheet_df)
-            sheet_df["ORIGEN_RECAUDO"] = "RECAUDO INTERNO" if sheet_index == 0 else "RECAUDO EXTERNO"
-            dataframes.append(sheet_df)
-
-        return pd.concat(dataframes, ignore_index=True, sort=False)
-
-    df = _leer_tabular_file(tmp_path, file_path)
-    df["ORIGEN_RECAUDO"] = "RECAUDO EXTERNO"
-    return df
     
 def get_datos_sucios_files() -> Dict:
     headers = get_graph_headers()
@@ -432,6 +465,18 @@ def get_datos_sucios_files() -> Dict:
         logger.warning("No se encontraron archivos en SharePoint")
     else:
         logger.info("Se procesaran todos los archivos encontrados en SharePoint")
+
+    if FILE_ID:
+        total_files = len(files)
+        files = [file_info for file_info in files if file_info.get("file_id") == FILE_ID]
+        logger.info(
+            "Filtro file_id aplicado (%s): %s de %s archivo(s) coinciden",
+            FILE_ID,
+            len(files),
+            total_files,
+        )
+        if not files:
+            logger.warning("No se encontraron archivos con file_id=%s", FILE_ID)
 
     files.sort(key=lambda file_info: file_info.get("createdDateTime", ""))
 
@@ -551,7 +596,10 @@ def save_datos_sucios_to_database(excel_files, headers, site_id, drive_id, batch
                 try:
                     download_with_retries(file_download_url, tmp_path, headers=headers, timeout=(10, 900))
                     try:
-                        df = _leer_tabular_file(tmp_path, file_info["file_path"])
+                        if Document.RECAUDO_MULTAS.value in file_info["file_path"]:
+                            df = _load_recaudos_multas_dataframe(file_info["file_path"], tmp_path)
+                        else:
+                            df = _leer_tabular_file(tmp_path, file_info["file_path"])
                     except Exception:
                         df = None
                     filas_count = contar_filas_archivo(file_info["file_path"], df)
@@ -1260,8 +1308,7 @@ def get_recaudos_multas(file_id, file_path, headers, site_id, drive_id):
 
         # Leer archivo
         if file_path.lower().endswith(".xlsx"):
-            df = _leer_excel_multihojas(tmp_path, file_path)
-            logger.info(f"Excel leído: {len(df)} filas")
+            df = _load_recaudos_multas_dataframe(file_path, tmp_path)
         elif file_path.lower().endswith(".csv"):
             df = pd.read_csv(tmp_path)
             df.columns = (
@@ -1281,6 +1328,12 @@ def get_recaudos_multas(file_id, file_path, headers, site_id, drive_id):
         organismo = extract_organismo(file_path)
         total_guardadas = 0
         total_errores = 0
+
+        logger.info(
+            "Encabezados detectados en multas (%s): %s",
+            file_path,
+            list(df.columns),
+        )
         
         # Procesar en chunks lógicos (iloc)
         for chunk_start in range(0, len(df), CHUNK_SIZE):
@@ -1291,27 +1344,30 @@ def get_recaudos_multas(file_id, file_path, headers, site_id, drive_id):
             records = []
             rows_in_chunk = 0
             chunk_start_time = time.time()
-            for row in df_chunk.itertuples(index=False, name='Record'):
+            for row_dict in df_chunk.to_dict(orient="records"):
                 try:
                     rows_in_chunk += 1
-                    row_dict = row._asdict()
+                    if chunk_start == 0 and rows_in_chunk <= 5:
+                        logger.info("row_dict muestra #%s en multas: %s", rows_in_chunk, row_dict)
+
+                    fuente = safe_text(row_dict, "FUENTE") or safe_text(row_dict, "ORIGEN_RECAUDO")
                     
                     recaudo = Recaudo(
                         archivo_id=file_id,
                         organismo=organismo,
                         tipo_recaudo="MULTAS",
                         origen_recaudo=safe_text(row_dict, "ORIGEN_RECAUDO"),
-                        fuente=safe_text(row_dict, "FUENTE"),
+                        fuente=fuente,
                         fecha_pago=safe_datetime(row_dict, "FECHA_PAGO") or safe_datetime(row_dict, "_1"),
-                        recibo=safe_text(row_dict, "RECIBO"),
+                        recibo=safe_receipt(row_dict, "RECIBO"),
                         valor_recibido=safe_text(row_dict, "VALOR_RECIBO"),
                         tipo_documento=safe_text(row_dict, "TIPO_DOCUMENTO"),
                         identificacion=safe_text(row_dict, "IDENTIFICACION"),
                         nombre=safe_text(row_dict, "NOMBRE"),
                         vehiculo_placa=safe_text(row_dict, "VEHI_PLACA"),
-                        comparendo=safe_text(row_dict, "COMPARENDO"),
-                        fecha_comparendo=safe_datetime(row_dict, "COMP_FECHA"),
-                        año_comparendo=safe_text(row_dict, "AÑO_COMPARENDO"),
+                        comparendo=safe_text(row_dict, "COMPARENDO") or safe_text(row_dict, "COMP_NUMERO"),
+                        fecha_comparendo=safe_datetime(row_dict, "COMP_FECHA") or safe_datetime(row_dict, "FECHA_COMPARENDO"),
+                        año_comparendo=safe_text(row_dict, "AÑO_COMPARENDO") or safe_text(row_dict, "ANIO_COMPARENDO"),
                         prescripcion=safe_text(row_dict, "PRESCRIPCION"),
                         tipo_comparendo=_clean_numbered_prefix(safe_text(row_dict, "TIPO_COMPARENDO")),
                         clase_vehiculo=safe_text(row_dict, "CLASE_VEHICULO"),
@@ -1431,14 +1487,15 @@ def get_recaudos_derechos(file_id, file_path, headers, site_id, drive_id):
                 try:
                     rows_in_chunk += 1
                     row_dict = row._asdict()
+                    fuente = safe_text(row_dict, "FUENTE") or safe_text(row_dict, "ORIGEN_RECAUDO")
                     
                     recaudo = Recaudo(
                         archivo_id=file_id,
                         organismo=organismo,
                         tipo_recaudo="DERECHOS DE TRANSITO",
-                        fuente=safe_text(row_dict, "FUENTE"),
+                        fuente=fuente,
                         fecha_pago=safe_datetime(row_dict, "FECHA_PAGO") or safe_datetime(row_dict, "FECHA PAGO") or safe_datetime(row_dict, "_1"),
-                        recibo=safe_text(row_dict, "RECIBO"),
+                        recibo=safe_receipt(row_dict, "RECIBO"),
                         recibo_pago=safe_text(row_dict, "RECIBO_PAGO"),
                         valor_recibido=safe_text(row_dict, "VALOR_RECIBO"),
                         tipo_documento=safe_text(row_dict, "TIPO_DOCUMENTO"),
