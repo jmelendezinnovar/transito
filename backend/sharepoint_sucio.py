@@ -1310,7 +1310,7 @@ def get_recaudos_multas(file_id, file_path, headers, site_id, drive_id):
         if file_path.lower().endswith(".xlsx"):
             df = _load_recaudos_multas_dataframe(file_path, tmp_path)
         elif file_path.lower().endswith(".csv"):
-            df = pd.read_csv(tmp_path)
+            df = pd.read_csv(tmp_path, low_memory=False)
             df.columns = (
                 df.columns.str.strip()
                 .str.upper()
@@ -1455,7 +1455,7 @@ def get_recaudos_derechos(file_id, file_path, headers, site_id, drive_id):
             df = _leer_excel_multihojas(tmp_path, file_path)
             logger.info(f"Excel leído: {len(df)} filas")
         elif file_path.lower().endswith(".csv"):
-            df = pd.read_csv(tmp_path)
+            df = pd.read_csv(tmp_path, low_memory=False)
             df.columns = (
                 df.columns.str.strip()
                 .str.upper()
@@ -1588,7 +1588,7 @@ def get_carteras_multas(file_id, file_path, headers, site_id, drive_id):
             df = _leer_excel_multihojas(tmp_path, file_path)
             logger.info(f"Excel leído: {len(df)} filas")
         elif file_path.lower().endswith(".csv"):
-            df = pd.read_csv(tmp_path)
+            df = pd.read_csv(tmp_path, low_memory=False)
             df.columns = (
                 df.columns.str.strip()
                 .str.upper()
