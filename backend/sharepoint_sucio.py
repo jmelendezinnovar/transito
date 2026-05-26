@@ -42,6 +42,13 @@ def build_sharepoint_view_url(web_url: Optional[str], archivo_id: str) -> str:
         base_url = f"https://{DOMINIO}/:x:/s/{NOMBRE_SITIO}"
     return f"{base_url}/{archivo_id}"
 
+
+def _extract_archivo_path_metadata(file_path: str) -> tuple[str, str, str]:
+    parts = [part for part in (file_path or "").strip("/").split("/") if part]
+    if len(parts) < 3:
+        raise ValueError(f"La ruta no contiene organismo/categoria/tipo: {file_path}")
+    return parts[0], parts[1], parts[2]
+
 def get_access_token() -> str:
     app = msal.ConfidentialClientApplication(
         CLIENT_ID, authority=AUTHORITY, client_credential=CLIENT_SECRET
@@ -612,10 +619,15 @@ def save_datos_sucios_to_database(excel_files, headers, site_id, drive_id, batch
                 logger.warning(f"Error descargando {file_info['file_path']} para contar filas: {str(e)}")
                 filas_count = 0
 
+            organismo, categoria, tipo = _extract_archivo_path_metadata(file_info["file_path"])
+
             file_record = Archivo(
                 archivo_id=file_info["file_id"],
                 nombre=file_info["file_name"],
                 ruta=file_info["file_path"],
+                organismo=organismo,
+                categoria=categoria,
+                tipo=tipo,
                 url=file_view_url,
                 filas=filas_count
             )

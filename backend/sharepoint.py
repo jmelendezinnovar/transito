@@ -44,6 +44,13 @@ def _path_matches_document(file_path: str, document: Document) -> bool:
     return document.value.upper() in _normalized_path_for_match(file_path)
 
 
+def _extract_archivo_path_metadata(file_path: str) -> tuple[str, str, str]:
+    parts = [part for part in (file_path or "").strip("/").split("/") if part]
+    if len(parts) < 3:
+        raise ValueError(f"La ruta no contiene organismo/categoria/tipo: {file_path}")
+    return parts[0], parts[1], parts[2]
+
+
 def _clean_numbered_prefix(value: str | None) -> str | None:
     if not value:
         return value
@@ -476,10 +483,15 @@ def save_files_to_database(excel_files, headers, site_id, drive_id):
                 logger.warning(f"Error descargando {file_info['file_path']} para contar filas: {str(e)}")
                 filas_count = 0
 
+            organismo, categoria, tipo = _extract_archivo_path_metadata(file_info["file_path"])
+
             file_record = Archivo(
                 archivo_id=file_info["file_id"],
                 nombre=file_info["file_name"],
                 ruta=file_info["file_path"],
+                organismo=organismo,
+                categoria=categoria,
+                tipo=tipo,
                 url=file_view_url,
                 filas=filas_count
             )
