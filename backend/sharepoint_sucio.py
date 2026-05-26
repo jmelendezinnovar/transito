@@ -1487,6 +1487,10 @@ def get_recaudos_derechos(file_id, file_path, headers, site_id, drive_id):
                 try:
                     rows_in_chunk += 1
                     row_dict = row._asdict()
+                    primer_valor = next(iter(row_dict.values()), None)
+                    if (safe_text({"_0": primer_valor}, "_0") or "").strip().upper() == "FUENTE":
+                        continue
+
                     fuente = safe_text(row_dict, "FUENTE") or safe_text(row_dict, "ORIGEN_RECAUDO")
                     
                     recaudo = Recaudo(
