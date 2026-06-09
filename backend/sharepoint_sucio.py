@@ -434,6 +434,22 @@ def _extraer_anio_valido(value) -> Optional[int]:
     if not text:
         return None
 
+    # Normalizar nombres de meses en español para que pd.to_datetime los entienda
+    meses_es_en = {
+        "ene.": "Jan", "feb.": "Feb", "mar.": "Mar", "abr.": "Apr",
+        "may.": "May", "jun.": "Jun", "jul.": "Jul", "ago.": "Aug",
+        "sep.": "Sep", "oct.": "Oct", "nov.": "Nov", "dic.": "Dec",
+        "enero": "January", "febrero": "February", "marzo": "March",
+        "abril": "April", "mayo": "May", "junio": "June", "julio": "July",
+        "agosto": "August", "septiembre": "September", "octubre": "October",
+        "noviembre": "November", "diciembre": "December",
+    }
+    text_lower = text.lower()
+    for es, en in meses_es_en.items():
+        if es in text_lower:
+            text = text_lower.replace(es, en)
+            break
+
     parsed = pd.to_datetime(text, errors="coerce", dayfirst=True)
     if not pd.isna(parsed):
         return int(parsed.year)
@@ -1580,147 +1596,3 @@ def get_recaudos_derechos(file_id, file_path, headers, site_id, drive_id):
         logger.error(f"Error procesando archivo {file_path}: {str(e)}")
         return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
     
-def get_carteras_multas(file_id, file_path, headers, site_id, drive_id):
-    """Versión optimizada: chunks + itertuples + batch insert"""
-    try:
-        download_url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{file_id}/content"
-
-        # Descargar en streaming a temp file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_path)[1]) as tmpf:
-            tmp_path = tmpf.name
-
-        try:
-            download_with_retries(download_url, tmp_path, headers=headers, timeout=(10, 900))
-        except Exception as e:
-            logger.error(f"Error descargando archivo: {str(e)}")
-            try:
-                os.remove(tmp_path)
-            except Exception:
-                pass
-            return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
-
-        # Leer archivo
-        if file_path.lower().endswith(".xlsx"):
-            df = _leer_excel_multihojas(tmp_path, file_path)
-            logger.info(f"Excel leído: {len(df)} filas")
-        elif file_path.lower().endswith(".csv"):
-            df = pd.read_csv(tmp_path, low_memory=False)
-            df.columns = (
-                df.columns.str.strip()
-                .str.upper()
-                .str.replace(" ", "_", regex=False)
-            )
-            logger.info(f"CSV leído: {len(df)} filas")
-        else:
-            logger.error(f"Formato de archivo no soportado: {file_path}")
-            try:
-                os.remove(tmp_path)
-            except Exception:
-                pass
-            return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
-        
-        organismo = extract_organismo(file_path)
-        total_guardadas = 0
-        total_errores = 0
-        # Procesar en chunks lógicos (iloc)
-        for chunk_start in range(0, len(df), CHUNK_SIZE):
-            df_chunk = df.iloc[chunk_start:chunk_start + CHUNK_SIZE]
-            chunk_len = len(df_chunk)
-            logger.info(f"Procesando filas {chunk_start} a {chunk_start + chunk_len} ({chunk_len} filas)")
-
-            # Crear sesión local para este chunk
-            db_session = Session()
-
-            insert_mappings = []
-            rows_in_chunk = 0
-            chunk_start_time = time.time()
-            for idx, row in enumerate(df_chunk.itertuples(index=False, name='Record')):
-                try:
-                    rows_in_chunk += 1
-                    row_dict = row._asdict()
-                    codigo = str(row_dict.get('CODIGO', '') or '')
-
-                    insert_mappings.append({
-                            'archivo_id': file_id,
-                            'organismo': organismo,
-                            'codigo': codigo,
-                            'tipo_cartera': 'MULTAS',
-                            'estado_cartera_final': WalletStatus.ACTIVE.value,
-                            'fecha': safe_text(row_dict, 'FECHA_COMPARENDO'),
-                            'tipo_comparendo': safe_text(row_dict, 'TIPO_COMPARENDO'),
-                            'clase': safe_text(row_dict, 'CLASE'),
-                            'servicio': safe_text(row_dict, 'SERVICIO'),
-                            'valor_inicial_cartera': safe_text(row_dict, 'CART_VALOR_INICIAL'),
-                            'numero_referencia_cartera': safe_text(row_dict, 'CART_NRO_REFERENCIA'),
-                            'estado_cartera': safe_text(row_dict, 'ESTADO_CARTERA'),
-                            'fecha_inicio_cartera': safe_text(row_dict, 'CART_FECHA_INGRESO'),
-                            'estado_gestion': safe_text(row_dict, 'ESTADO_GESTION'),
-                            'capital': safe_text(row_dict, 'CAPITAL'),
-                            'total': safe_text(row_dict, 'TOTAL'),
-                            'resolucion_fecha': safe_text(row_dict, 'RESOLUCION_FECHA'),
-                            'intereses': safe_text(row_dict, 'INTERESES'),
-                            'placa': safe_text(row_dict, 'PLACA'),
-                            'tipo_identificacion': safe_text(row_dict, 'TIPO_IDENTIFICACION'),
-                            'numero_identificacion': safe_text(row_dict, 'NUMERO_IDENTIFICACION'),
-                            'nombre_infractor': safe_text(row_dict, 'NOMBRE_INFRACTOR'),
-                            'numero_comparendo': safe_text(row_dict, 'NUMERO_COMPARENDO'),
-                            'estado_comparendo': safe_text(row_dict, 'ESTADO_COMPARENDO'),
-                            'infraccion': safe_text(row_dict, 'INFRACCION'),
-                            'resolucion_sancion': safe_text(row_dict, 'RESOLUCION_SANCION'),
-                            'mandamiento_de_pago': safe_text(row_dict, 'MANDAMIENTO_DE_PAGO'),
-                            'fecha_mandamiento_de_pago': safe_text(row_dict, 'FECHA_MANDAMIENTO'),
-                            'fecha_de_notificacion': safe_text(row_dict, 'NOTIF_FECHA'),
-                            'clase_vehiculo': safe_text(row_dict, 'CLASE_VEHICULO'),
-                            'año_comparendo': safe_text(row_dict, "TO_CHAR(FECHA_COMPARENDO,'YYYY')"),
-                            'ciudad': safe_text(row_dict, 'NOMBRE_CIUDAD'),
-                            'direccion': safe_text(row_dict, 'DIR_DIRECCION'),
-                            'telefono': safe_text(row_dict, 'DIR_TELEFONO'),
-                            'movil': safe_text(row_dict, 'MOVIL'),
-                            'email': safe_text(row_dict, 'EMAIL')
-                        })
-                    
-                    total_guardadas += 1
-
-                    if rows_in_chunk % PROGRESS_LOG_EVERY == 0:
-                        elapsed = time.time() - chunk_start_time
-                        logger.info(f"Progreso chunk: {rows_in_chunk}/{chunk_len} filas procesadas en este chunk, total guardadas: {total_guardadas} - {elapsed:.1f}s")
-
-                except Exception as e:
-                    total_errores += 1
-                    logger.warning(f"Error en fila: {str(e)[:100]}")
-            
-            # Aplicar actualizaciones e inserciones en bloque
-            try:
-                if insert_mappings:
-                    # dividir insert_mappings en sub-batches si es grande
-                    for j in range(0, len(insert_mappings), BATCH_SIZE):
-                        sub = insert_mappings[j:j + BATCH_SIZE]
-                        db_session.bulk_insert_mappings(Cartera, sub)
-                db_session.commit()
-            except SQLAlchemyError as e:
-                logger.error(f"Error aplicando bulk updates/inserts: {e}")
-                try:
-                    db_session.rollback()
-                except Exception:
-                    pass
-            finally:
-                try:
-                    db_session.close()
-                except Exception:
-                    pass
-        
-        logger.info(f"Total guardadas: {total_guardadas}, Total errores: {total_errores}")
-
-        try:
-            os.remove(tmp_path)
-        except Exception:
-            pass
-
-        return {
-            "filas_procesadas": total_guardadas + total_errores,
-            "guardadas": total_guardadas,
-            "errores": total_errores
-        }
-    except Exception as e:
-        logger.error(f"Error procesando archivo {file_path}: {str(e)}")
-        return {"filas_procesadas": 0, "guardadas": 0, "errores": 0}
