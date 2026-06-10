@@ -943,7 +943,7 @@ def get_carteras_multas(file_id, file_path, headers, site_id, drive_id):
 
         logger.info(
             "Columnas detectadas en multas: %s",
-            ", ".join(df.columns.tolist()[:60])
+            ", ".join(df.columns.tolist())
         )
 
         for chunk_start in range(0, len(df), CHUNK_SIZE):
@@ -1033,6 +1033,7 @@ def get_carteras_multas(file_id, file_path, headers, site_id, drive_id):
                         safe_text(row_dict, 'AÑO_COMPARENDO') or
                         safe_text(row_dict, 'FECHA_COMPARENDO') or
                         safe_text(row_dict, 'FECHA') or
+                        safe_text(row_dict, 'REFERENCIA') or
                         ''
                     )
                     year_int = _extraer_anio_valido(year_source)
@@ -1096,7 +1097,12 @@ def get_carteras_multas(file_id, file_path, headers, site_id, drive_id):
                         'direccion': safe_text(row_dict, 'DIR_DIRECCION'),
                         'telefono': safe_text(row_dict, 'DIR_TELEFONO'),
                         'movil': safe_text(row_dict, 'MOVIL'),
-                        'email': safe_text(row_dict, 'EMAIL')
+                        'email': safe_text(row_dict, 'EMAIL'),
+                        'modelo': safe_text(row_dict, 'MODELO'),
+                        'fecha_propietario': safe_text(row_dict, 'FECHA_PROPIETARIO'),
+                        'filtro_coactivo': safe_text(row_dict, 'FILTRO_COACTIVO'),
+                        'mp_resolucion': safe_text(row_dict, 'MP_RESOLUCION'),
+                        'fecha_mp': safe_text(row_dict, 'FECHA_MP')
                     })
 
                     total_guardadas += 1
@@ -1233,6 +1239,18 @@ def get_carteras_derechos(file_id, file_path, headers, site_id, drive_id):
                     ):
                         continue
 
+                    year_source = (
+                        safe_text(row_dict, "TO_CHAR(FECHA_COMPARENDO,'YYYY')") or
+                        safe_text(row_dict, 'AÑO_COMPARENDO') or
+                        safe_text(row_dict, 'FECHA_COMPARENDO') or
+                        safe_text(row_dict, 'FECHA') or
+                        safe_text(row_dict, 'REFERENCIA') or
+                        ''
+                    )
+                    year_int = _extraer_anio_valido(year_source)
+                    if year_int is None or year_int < 2015:
+                        continue
+
                     insert_mappings.append({
                             'archivo_id': file_id,
                             'organismo': organismo,
@@ -1269,7 +1287,8 @@ def get_carteras_derechos(file_id, file_path, headers, site_id, drive_id):
                             'clase_vehiculo': safe_text(row_dict, 'CLASE_VEHICULO'),
                             'direccion': safe_text(row_dict, 'DIRECCION'),
                             'mp_resolucion': safe_text(row_dict, 'MP_RESOLUCION'),
-                            'fecha_mp': safe_text(row_dict, 'FECHA_MP')
+                            'fecha_mp': safe_text(row_dict, 'FECHA_MP'),
+                            'año_comparendo': str(year_int)
                         })
 
                     total_guardadas += 1
